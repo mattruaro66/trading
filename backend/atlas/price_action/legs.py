@@ -14,7 +14,7 @@ from atlas.core.types import Bar, Side
 @dataclass(frozen=True)
 class LegParams:
     max_count: int = 4
-    max_pullback_bars: int = 30
+    max_pullback_bars: int = 20  # Brooks: após ~20 barras o pullback vira trading range
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,8 @@ class LegCounter:
             self.reset(hi)
         elif not self.in_pullback:
             self.swing = hi if self.swing is None else max(self.swing, hi)
-            if hi < self._hi(prev):
+            # Brooks: pullback bar (mínima abaixo da anterior) ou pause bar (máxima igual ou abaixo da anterior)
+            if hi <= self._hi(prev) or lo < self._lo(prev):
                 self.in_pullback = True
                 self.count = 0
                 self.armed = True
@@ -90,7 +91,7 @@ class LegCounter:
                 self.count += 1
                 self.armed = False
                 event = ("H" if self.side is Side.LONG else "L") + str(self.count)
-            elif hi <= self._hi(prev):
+            elif hi < self._hi(prev):  # Brooks: "bar with a lower high" rearma para o próximo H
                 self.armed = True
             self.pb_extreme = lo if self.pb_extreme is None else min(self.pb_extreme, lo)
             if self.swing is not None and hi > self.swing:

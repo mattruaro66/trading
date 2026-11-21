@@ -106,6 +106,9 @@ def test_candidate_consistency_property(synthetic_win):
     for a, b in zip(snaps, snaps[1:]):
         if not b.contiguous:
             continue
+        lat = b.lateral
+        if lat is not None and (not lat.counting_allowed or lat.event in ("breakout_confirmed", "range_expanded")):
+            continue  # Brooks: sem contagem H/L em tight trading range (a contagem recomeça após o rompimento)
         for side, cross in ((Side.LONG, b.bar.high > a.bar.high), (Side.SHORT, b.bar.low < a.bar.low)):
             k = a.legs(side).candidate_for
             if k is not None and cross:
@@ -145,3 +148,49 @@ def test_session_boundary_resets_legs_not_regime(synthetic_win):
             break
     assert boundary is not None and boundary.reset_reason is None
     assert not boundary.bull_legs.in_pullback and boundary.regime.bars_available > 1
+
+
+# ------------------------------------------------------------- regras do glossário Brooks
+def test_brooks_h1_h2_definitions():
+    """H1: máxima acima da anterior no pullback; depois de uma barra com MÁXIMA MAIS BAIXA, o próximo é H2.
+    Uma barra com máxima igual à anterior (não mais baixa) não rearma a contagem."""
+    rows = [(100000, 100100, 99950, 100080), (100080, 100200, 100050, 100180), (100180, 100300, 100150, 100280),
+            (100280, 100290, 100200, 100210),   # pause/pullback
+            (100210, 100295, 100190, 100250),   # H1 (supera 100290)
+            (100250, 100295, 100200, 100220),   # máxima IGUAL → não rearma
+            (100220, 100298, 100210, 100290),   # supera, mas não é H2 (não houve máxima mais baixa)
+            (100290, 100280, 100230, 100240),   # máxima mais baixa → rearma
+            (100240, 100290, 100235, 100285)]   # H2
+    lc, prev, ev = LegCounter(Side.LONG), None, []
+    for b in mk(rows):
+        ev.append(lc.update(b, prev).event)
+        prev = b
+    assert ev == [None, None, None, None, "H1", None, None, None, "H2"]
+
+
+def test_brooks_pullback_bar_starts_pullback():
+    """Pullback bar (mínima abaixo da anterior) inicia o pullback mesmo com máxima maior (barra externa)."""
+    rows = [(100000, 100100, 99950, 100080), (100080, 100200, 100050, 100180), (100180, 100210, 100000, 100020)]
+    lc, prev = LegCounter(Side.LONG), None
+    for b in mk(rows):
+        snap = lc.update(b, prev)
+        prev = b
+    assert snap.in_pullback
+
+
+def test_brooks_pullback_longer_than_20_bars_becomes_range():
+    from atlas.price_action.legs import LegParams
+    assert LegParams().max_pullback_bars == 20
+
+
+def test_tight_range_height_limited_by_daily_range():
+    from atlas.price_action.lateral import LateralGate
+    g = LateralGate(3, 0.25)
+    g.day_ranges.extend([1000.0] * 5)  # range diário médio de 1.000 pontos → limite de 250
+    bars = mk([(100000, 100200, 99800, 100100), (100100, 100150, 99900, 100000), (100000, 100100, 99850, 99950),
+               (99950, 100050, 99900, 100000)])
+    snaps = [g.update(b) for b in bars]
+    assert all(s.state == "normal" for s in snaps)  # faixa de 400 pts > 250: não é tight
+    g2 = LateralGate(3, 0.25)
+    g2.day_ranges.extend([2000.0] * 5)  # limite de 500
+    assert [g2.update(b) for b in bars][-1].event == "lateral_start"

@@ -83,6 +83,8 @@ Classificação:
 
 **Contiguidade:** o estado do regime é reiniciado quando há lacuna de dados (candle ausente dentro da sessão), troca de contrato ou nova sessão (parâmetro `reset_on_new_session`, padrão `false` — o EMA atravessa a noite, mas a lacuna de sessão não é tratada como candle ausente).
 
+> **Atualização (21/11/2026):** as regras de contagem, de tight trading range e de rompimento foram alinhadas ao glossário oficial do Brooks Trading Course. Ver `BROOKS_RULES.md`: pullback começa em pullback bar ou pause bar; rearma só com máxima mais baixa; limite de 20 barras; sem contagem em tight trading range.
+
 ## 4. Contagem de pernas — High 1/High 2, Low 1/Low 2 (`price_action/legs.py`)
 
 [CONCEITO-BROOKS] Em um pullback de tendência de alta, cada vez que uma barra ultrapassa a máxima da barra anterior temos uma tentativa de retomada: a primeira é o *High 1*; se o mercado volta a lateralizar/cair e outra barra ultrapassa a máxima da anterior, temos o *High 2* (segunda entrada). Simetricamente, *Low 1/Low 2* em pullbacks de tendência de baixa.

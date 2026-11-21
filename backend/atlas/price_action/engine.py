@@ -26,10 +26,10 @@ class PriceActionParams:
     regime: RegimeParams = field(default_factory=RegimeParams)
     legs: LegParams = field(default_factory=LegParams)
     reset_regime_on_new_session: bool = False
-    # Filtro de lateralidade na contagem H/L (desligado por padrão; ligado pela estratégia B do usuário)
-    lateral_filter: bool = False
+    # Tight trading range (Brooks + definição do usuário): suspende a contagem H/L até rompimento confirmado
+    lateral_filter: bool = True
     lateral_min_bars: int = 3
-    lateral_min_overlap: float = 0.0
+    lateral_max_height_adr: float | None = 0.25
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,10 @@ class PriceActionEngine:
         self.regime = RegimeTracker(p.regime)
         self.bull = LegCounter(Side.LONG, p.legs)
         self.bear = LegCounter(Side.SHORT, p.legs)
-        self.gate = LateralGate(p.lateral_min_bars, p.lateral_min_overlap) if p.lateral_filter else None
+        old = getattr(self, "gate", None)
+        self.gate = LateralGate(p.lateral_min_bars, p.lateral_max_height_adr) if p.lateral_filter else None
+        if old is not None and self.gate is not None:
+            self.gate.day_ranges = old.day_ranges  # o histórico de ranges diários sobrevive a lacunas
 
     def _atr(self) -> float | None:
         if len(self._tr) < self.params.atr_period:
@@ -97,7 +100,7 @@ class PriceActionEngine:
             self.bull.reset()
             self.bear.reset()
             if self.gate:
-                self.gate.reset()
+                self.gate.new_session()
             if self.params.reset_regime_on_new_session:
                 self.regime.reset()
                 self._tr.clear()
@@ -110,7 +113,7 @@ class PriceActionEngine:
         lat = None
         if self.gate is not None:
             lat = self.gate.update(bar)
-            if lat.event == "breakout_confirmed":
+            if lat.event in ("breakout_confirmed", "range_expanded"):
                 leg_prev = None  # contagem recomeça do zero na barra de follow-through
             elif not lat.counting_allowed:
                 # lateralidade (ou rompimento ainda sem continuidade): não há contagem de H/L

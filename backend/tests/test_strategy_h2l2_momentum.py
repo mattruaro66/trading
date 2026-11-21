@@ -171,13 +171,30 @@ def test_data_quality_filter_blocks_signal():
 
 
 # ----------------------------------------------------------------------- lateralidade (regra do usuário)
-def test_lateral_pullback_is_not_counted():
-    """Pullback com 3 barras sobrepostas = lateralidade: nenhum H1/H2 é contado nem executado."""
+def test_lateral_bar_definition():
+    from atlas.price_action.lateral import LateralGate
+    prev, inside, above, below = mk([(100, 120, 90, 110), (110, 125, 95, 120), (110, 130, 105, 125), (110, 112, 80, 85)])
+    assert LateralGate.is_lateral_bar(inside, prev)      # fecha em 120, dentro de 90–120
+    assert not LateralGate.is_lateral_bar(above, prev)   # fecha em 125 > máxima 120
+    assert not LateralGate.is_lateral_bar(below, prev)   # fecha em 85 < mínima 90
+
+
+def test_tight_range_suspends_h_l_counting():
+    """3+ barras com fechamento dentro da barra anterior = lateralidade: nenhum H/L é contado."""
+    rows = [(102250, 102255, 102200, 102210), (102210, 102240, 102195, 102230), (102230, 102245, 102200, 102215),
+            (102215, 102240, 102205, 102225), (102225, 102250, 102210, 102240), (102240, 102255, 102220, 102230)]
+    _, outs = run(after_trend(rows))
+    tail = outs[-4:]
+    assert all(not o.snapshot.lateral.counting_allowed for o in tail)
+    assert not any(o.snapshot.bull_legs.event or o.snapshot.bear_legs.event for o in tail)
+    assert not any(s.setup_label in ("H1", "H2", "H3", "L2", "L3") for o in tail for s in o.signals)
+
+
+def test_stair_step_pullback_is_not_lateral():
+    """Pullback em que cada barra fecha fora da anterior não é lateralidade: o H2 é contado e executado."""
     pipe, outs = run(trend_then_h2([(102180, 102200, 102170, 102195)]))
-    lat = [o.snapshot.lateral for o in outs[-5:]]
-    assert any(l.state != "normal" for l in lat)
-    assert not any(o.snapshot.bull_legs.event for o in outs[-5:])
-    assert not any(s.setup_label in ("H2", "H3") for o in outs for s in o.signals)
+    assert all(o.snapshot.lateral.counting_allowed for o in outs[-5:])
+    assert any(s.setup_label == "H2" for o in outs for s in o.signals)
 
 
 def test_counting_resumes_after_confirmed_breakout_with_follow_through():
@@ -187,8 +204,8 @@ def test_counting_resumes_after_confirmed_breakout_with_follow_through():
             (102295, 102340, 102290, 102335)]   # follow-through: fecha acima do fechamento do rompimento
     _, outs = run(after_trend(rows))
     ev = [o.snapshot.lateral.event for o in outs[-7:]]
-    assert "lateral_start" in ev[:4] and ev[-2] == "breakout" and ev[-1] == "breakout_confirmed"
-    assert all(not o.snapshot.lateral.counting_allowed for o in outs[-5:-1])
+    assert "lateral_start" in ev[:5] and ev[-2] == "breakout" and ev[-1] == "breakout_confirmed"
+    assert all(not o.snapshot.lateral.counting_allowed for o in outs[-4:-1])
     assert outs[-1].snapshot.lateral.counting_allowed
     assert outs[-1].snapshot.bull_legs.count == 0 and not outs[-1].snapshot.bull_legs.in_pullback  # contagem recomeça do zero
 
@@ -203,8 +220,8 @@ def test_breakout_without_follow_through_fails_and_stays_lateral():
     assert last.range_high == 102300  # faixa ampliada com a barra de rompimento
 
 
-def test_strategy_a_unaffected_by_lateral_filter():
+def test_strategy_a_also_follows_brooks_tight_range_rule():
     from atlas.strategy.second_entry import SecondEntryParams
     pipe = AnalysisPipeline("WIN", SecondEntryParams())
     out = [pipe.on_bar_closed(b) for b in trend_then_h2()][-1]
-    assert out.snapshot.lateral is None and out.signals  # estratégia A continua sem o filtro
+    assert out.snapshot.lateral is not None and out.snapshot.lateral.counting_allowed and out.signals
