@@ -191,6 +191,8 @@ Backtest, replay e live usam o mesmo `TradeSimulator`, que registra as ordens do
 | 3 barras consecutivas → entra a favor | Na 3ª barra seguida a favor da tendência → ordem a mercado na abertura seguinte |
 | Barra 2× a média das 7 anteriores → entra a favor | Barra a favor da tendência com amplitude > 2 × média das 7 anteriores → ordem a mercado na abertura seguinte |
 
+**Lateralidade (regra do usuário):** H e L não são contados quando há 3 ou mais barras consecutivas sobrepostas (faixa de preço comum a todas). A contagem volta, do zero, só após rompimento confirmado: barra que fecha fora da faixa seguida de barra de continuidade (follow-through) que fecha além do fechamento da barra de rompimento. Sem continuidade, o rompimento falha e a lateralidade continua. Código: `backend/atlas/price_action/lateral.py` (ligado só para a estratégia B; `lateral_min_overlap = 0` = leitura literal, qualquer faixa comum).
+
 Sem janela de horário, sem exigência de posição, sem limite de contratos e sem prioridade: toda regra que disparar é executada.
 Filtro adicional apenas no backtest simulado: sinais em candles com dados inválidos não são executados.
 Lotes abertos são zerados no fim do pregão (escopo day trade do projeto).

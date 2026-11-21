@@ -52,6 +52,9 @@ class H2L2MomentumParams(BaseModel):
     consecutive_bars: int = Field(3, ge=2, le=10)
     big_bar_multiple: float = Field(2.0, gt=1)
     big_bar_lookback: int = Field(7, ge=2, le=50)
+    lateral_filter: bool = True  # não conta H/L em lateralidade (3+ barras sobrepostas) até rompimento confirmado
+    lateral_min_bars: int = Field(3, ge=2, le=20)
+    lateral_min_overlap: float = Field(0.0, ge=0, le=1)  # 0 = leitura literal: qualquer faixa comum às 3 barras
     enable_momentum: bool = True
     enable_big_bar: bool = True
     flatten_minutes_before_close: int = Field(5, ge=0, le=60)

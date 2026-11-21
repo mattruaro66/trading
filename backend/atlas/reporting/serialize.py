@@ -28,6 +28,7 @@ def output_dict(out: PipelineOutput) -> dict:
                  "bear": {"in_pullback": s.bear_legs.in_pullback, "count": s.bear_legs.count, "event": s.bear_legs.event}},
         "marks": marks,
         "data_ok": s.data_ok,
+        "lateral": s.lateral.as_dict() if s.lateral else None,
         "reset_reason": s.reset_reason,
         "evaluations": [{"side": e.side.value, "setup": e.setup_label, "stage": e.stage, "passed": e.passed,
                          "criteria": [c.as_dict() for c in e.criteria]} for e in out.evaluations],

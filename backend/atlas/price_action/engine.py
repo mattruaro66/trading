@@ -12,6 +12,7 @@ from atlas.contracts.calendar import TradingCalendar, load_calendar
 from atlas.core.types import Bar, BarStatus, Quality, Side
 from atlas.market_data.validation import is_contiguous, is_next_session_open
 from atlas.price_action.bars import BarMetrics, BarParams, compute_metrics
+from atlas.price_action.lateral import LateralGate, LateralSnapshot
 from atlas.price_action.legs import LegCounter, LegParams, LegSnapshot
 from atlas.price_action.regime import RegimeParams, RegimeState, RegimeTracker
 
@@ -25,6 +26,10 @@ class PriceActionParams:
     regime: RegimeParams = field(default_factory=RegimeParams)
     legs: LegParams = field(default_factory=LegParams)
     reset_regime_on_new_session: bool = False
+    # Filtro de lateralidade na contagem H/L (desligado por padrão; ligado pela estratégia B do usuário)
+    lateral_filter: bool = False
+    lateral_min_bars: int = 3
+    lateral_min_overlap: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,7 @@ class PriceActionSnapshot:
     reset_reason: str | None  # motivo de reinício total (lacuna, troca de contrato)
     data_ok: bool  # janela de análise sem candles suspeitos/inválidos
     engine_version: str = ENGINE_VERSION
+    lateral: LateralSnapshot | None = None  # presente quando o filtro de lateralidade está ligado
 
     def legs(self, side: Side) -> LegSnapshot:
         return self.bull_legs if side is Side.LONG else self.bear_legs
@@ -58,6 +64,7 @@ class PriceActionEngine:
         self.regime = RegimeTracker(p.regime)
         self.bull = LegCounter(Side.LONG, p.legs)
         self.bear = LegCounter(Side.SHORT, p.legs)
+        self.gate = LateralGate(p.lateral_min_bars, p.lateral_min_overlap) if p.lateral_filter else None
 
     def _atr(self) -> float | None:
         if len(self._tr) < self.params.atr_period:
@@ -89,6 +96,8 @@ class PriceActionEngine:
             # pernas sempre reiniciam na nova sessão; regime opcionalmente
             self.bull.reset()
             self.bear.reset()
+            if self.gate:
+                self.gate.reset()
             if self.params.reset_regime_on_new_session:
                 self.regime.reset()
                 self._tr.clear()
@@ -98,9 +107,22 @@ class PriceActionEngine:
         self._tr.append(metrics.true_range)
         regime = self.regime.update(bar.open, bar.close, metrics.overlap_prev, atr_prev)
         leg_prev = prev if not session_start else None
-        bull = self.bull.update(bar, leg_prev)
-        bear = self.bear.update(bar, leg_prev)
+        lat = None
+        if self.gate is not None:
+            lat = self.gate.update(bar)
+            if lat.event == "breakout_confirmed":
+                leg_prev = None  # contagem recomeça do zero na barra de follow-through
+            elif not lat.counting_allowed:
+                # lateralidade (ou rompimento ainda sem continuidade): não há contagem de H/L
+                self.bull.reset()
+                self.bear.reset()
+        if lat is not None and not lat.counting_allowed:
+            bull, bear = self.bull.snapshot(), self.bear.snapshot()
+        else:
+            bull = self.bull.update(bar, leg_prev)
+            bear = self.bear.update(bar, leg_prev)
         self._quality_window.append(bar.quality is Quality.OK)
         data_ok = all(self._quality_window)
         self.prev = bar
-        return PriceActionSnapshot(bar, metrics, regime, bull, bear, contiguous, session_start, reset_reason, data_ok)
+        return PriceActionSnapshot(bar, metrics, regime, bull, bear, contiguous, session_start, reset_reason, data_ok,
+                                   lateral=lat)

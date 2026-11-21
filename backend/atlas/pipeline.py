@@ -44,6 +44,9 @@ class AnalysisPipeline:
                  calendar: TradingCalendar | None = None, simulate: bool = True):
         self.symbol = Symbol(symbol)
         self.cal = calendar or load_calendar()
+        if pa_params is None and isinstance(strategy_params, H2L2MomentumParams) and strategy_params.lateral_filter:
+            pa_params = PriceActionParams(lateral_filter=True, lateral_min_bars=strategy_params.lateral_min_bars,
+                                          lateral_min_overlap=strategy_params.lateral_min_overlap)
         self.engine = PriceActionEngine(pa_params, self.cal)
         self.strategy = make_strategy(self.symbol, strategy_params)
         self.simulate = simulate
