@@ -108,7 +108,9 @@ class LiveStartRequest(BaseModel):
 
 
 def _params(symbol: Symbol, raw: dict, strategy_id: str = "second_entry_trend"):
-    cls = {"second_entry_trend": SecondEntryParams, h2l2.STRATEGY_ID: h2l2.H2L2MomentumParams}.get(strategy_id)
+    from atlas.strategy import brooks_method as bm
+    cls = {"second_entry_trend": SecondEntryParams, h2l2.STRATEGY_ID: h2l2.H2L2MomentumParams,
+           bm.STRATEGY_ID: bm.BrooksMethodParams}.get(strategy_id)
     if cls is None:
         raise HTTPException(422, f"Estratégia desconhecida: {strategy_id}")
     try:

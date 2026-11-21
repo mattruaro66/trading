@@ -18,6 +18,7 @@ from atlas.core.types import Bar, Symbol
 from atlas.price_action.engine import PriceActionEngine, PriceActionParams, PriceActionSnapshot
 from atlas.strategy.base import SetupEvaluation, Signal
 from atlas.backtest.bracket_sim import BracketSimulator
+from atlas.strategy.brooks_method import BrooksMethodParams, BrooksMethodStrategy
 from atlas.strategy.h2l2_momentum import H2L2MomentumParams, H2L2MomentumStrategy
 from atlas.strategy.second_entry import SecondEntryParams, SecondEntryStrategy
 
@@ -26,6 +27,8 @@ def make_strategy(symbol: Symbol, params):
     """Instancia a estratégia correspondente ao tipo dos parâmetros (registro simples de estratégias)."""
     if isinstance(params, H2L2MomentumParams):
         return H2L2MomentumStrategy(symbol, params)
+    if isinstance(params, BrooksMethodParams):
+        return BrooksMethodStrategy(symbol, params)
     return SecondEntryStrategy(symbol, params)
 
 

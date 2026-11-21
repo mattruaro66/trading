@@ -56,6 +56,7 @@ class BracketSimulator:
         self._groups = itertools.count(1)
         self._working: dict[int, dict[str, SimOrder]] = {}  # grupo → função → ordem
         self._lot_group: dict[int, int] = {}  # trade_id → grupo
+        self._siblings: dict[int, list[Trade]] = {}  # trade_id → lotes do mesmo sinal
 
     # ------------------------------------------------------------------ estado
     @property
@@ -196,18 +197,41 @@ class BracketSimulator:
             target = self.spec.round_to_tick(ref + sign * s.target_points)
         else:
             stop, target = s.stop_price, s.target_price
-        t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, stop, target, entry_gap=gap)
-        self.lots.append(t)
-        self._lot_group[t.trade_id] = p.group
-        entry = self._finish(p.group, "entry", "filled", bar.ts_open, fill, "gap de abertura" if gap else "")
         exit_action = "sell" if s.side is Side.LONG else "buy"
-        sl = self._order(p.group, "stop_loss", exit_action, "stop", stop, bar.ts_open, s.setup_label, "OCO com o alvo deste lote")
-        tp = self._order(p.group, "take_profit", exit_action, "limit", target, bar.ts_open, s.setup_label, "OCO com o stop deste lote")
-        events = [ExecEvent("filled", bar.ts_open, s, t, orders=self._snap(entry, sl, tp))]
-        ev = self._manage(t, bar, entry_bar=True)
-        if ev:
-            events.append(ev)
+        entry = self._finish(p.group, "entry", "filled", bar.ts_open, fill, "gap de abertura" if gap else "")
+        targets = [target] + [self.spec.round_to_tick(x) for x in s.extra_targets]
+        new_lots, snaps = [], [entry]
+        for k, tgt in enumerate(targets):
+            g = p.group if k == 0 else next(self._groups)
+            t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, stop, tgt, entry_gap=gap)
+            t.lot = "scalp" if (k == 0 and len(targets) > 1) else ("swing" if k > 0 else "único")
+            self.lots.append(t)
+            self._lot_group[t.trade_id] = g
+            tag = "" if len(targets) == 1 else (" · lote scalp" if k == 0 else f" · lote swing {k}")
+            snaps.append(self._order(g, "stop_loss", exit_action, "stop", stop, bar.ts_open, s.setup_label, "OCO com o alvo deste lote" + tag))
+            snaps.append(self._order(g, "take_profit", exit_action, "limit", tgt, bar.ts_open, s.setup_label, "OCO com o stop deste lote" + tag))
+            new_lots.append(t)
+        for t in new_lots:
+            self._siblings[t.trade_id] = [x for x in new_lots if x is not t]
+        events = [ExecEvent("filled", bar.ts_open, s, new_lots[0], orders=self._snap(*snaps))]
+        for t in new_lots:
+            if t in self.lots:
+                ev = self._manage(t, bar, entry_bar=True)
+                if ev:
+                    events.append(ev)
         return events
+
+    def _move_siblings_to_breakeven(self, t: Trade, ts: datetime) -> tuple:
+        out = []
+        for sib in self._siblings.get(t.trade_id, []):
+            if sib in self.lots:
+                sib.stop_price = sib.entry_price
+                o = self._working.get(self._lot_group[sib.trade_id], {}).get("stop_loss")
+                if o is not None:
+                    o.price = sib.entry_price
+                    o.note = "stop movido para o zero a zero (alvo do scalp atingido)"
+                    out.append(o)
+        return self._snap(*out)
 
     def _manage(self, t: Trade, bar: Bar, entry_bar: bool) -> ExecEvent | None:
         sign = t.side.sign
@@ -226,7 +250,7 @@ class BracketSimulator:
                 px, reason = t.target_price - sign * slip_tgt, "target_gap"
         if reason is None:
             if stop_hit:
-                px, reason = t.stop_price - sign * slip_out, "stop"
+                px, reason = t.stop_price - sign * slip_out, ("breakeven" if t.stop_price == t.entry_price else "stop")
                 t.ambiguous_bar = tgt_hit
             elif tgt_hit:
                 px, reason = t.target_price - sign * slip_tgt, "target"
@@ -254,10 +278,12 @@ class BracketSimulator:
         self.lots.remove(t)
         self.closed.append(t)
         self.realized_brl += t.net_brl
-        if reason in ("stop", "stop_gap"):
+        if reason in ("stop", "stop_gap", "breakeven"):
             orders = self._snap(self._finish(g, "stop_loss", "filled", ts, px), self._finish(g, "take_profit", "cancelled", ts, note="OCO: stop executado"))
         elif reason in ("target", "target_gap"):
             orders = self._snap(self._finish(g, "take_profit", "filled", ts, px), self._finish(g, "stop_loss", "cancelled", ts, note="OCO: alvo executado"))
+            if t.signal.breakeven_after_first:
+                orders = orders + self._move_siblings_to_breakeven(t, ts)
         else:
             why = EXIT_REASON_PT.get(reason, reason)
             a = self._finish(g, "stop_loss", "cancelled", ts, note=f"saída por {why}")

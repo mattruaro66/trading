@@ -79,6 +79,8 @@ class Signal:
     stop_points: float | None = None  # se definido, stop/alvo são fixos em pontos a partir do preço de execução
     target_points: float | None = None
     max_bars_valid: int = 1
+    extra_targets: tuple = ()  # alvos de lotes adicionais do mesmo sinal (ex.: swing em 2R)
+    breakeven_after_first: bool = False  # Brooks: após o alvo do scalp, stop do lote restante vai para o zero a zero
 
     @property
     def signal_ts(self) -> datetime:

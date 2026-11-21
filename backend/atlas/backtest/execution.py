@@ -65,13 +65,14 @@ class Trade:
             "r_multiple": self.r_multiple, "net_r": self.net_r,
             "regime": s.context.get("regime", {}).get("regime"),
             "hour": s.signal_bar.ts_close.astimezone(TZ).hour,
+            "lot": getattr(self, "lot", "único"),
         }
 
 
 ROLE_PT = {"entry": "entrada", "stop_loss": "stop", "take_profit": "alvo", "market_exit": "saída a mercado"}
 STATUS_PT = {"working": "pendente", "filled": "executada", "cancelled": "cancelada", "expired": "expirada"}
 TYPE_PT = {"stop": "stop", "limit": "limitada", "market": "a mercado"}
-EXIT_REASON_PT = {"stop": "stop", "stop_gap": "stop (gap)", "target": "alvo", "target_gap": "alvo (gap)",
+EXIT_REASON_PT = {"breakeven": "zero a zero", "stop": "stop", "stop_gap": "stop (gap)", "target": "alvo", "target_gap": "alvo (gap)",
                   "time_exit": "tempo", "session_end": "fim da sessão", "data_gap_exit": "lacuna de dados"}
 
 

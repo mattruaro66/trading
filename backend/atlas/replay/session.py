@@ -24,7 +24,7 @@ from atlas.strategy.second_entry import SecondEntryParams
 class ReplaySession:
     symbol: Symbol
     bars: list[Bar]
-    params: SecondEntryParams | H2L2MomentumParams
+    params: object  # SecondEntryParams | H2L2MomentumParams | BrooksMethodParams
     costs: CostModel = field(default_factory=CostModel)
     evidence: dict | None = None
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
@@ -33,7 +33,7 @@ class ReplaySession:
     def __post_init__(self) -> None:
         self.bars = sorted(self.bars, key=lambda b: b.ts_open)
         self.pipeline = AnalysisPipeline(self.symbol, self.params, costs=self.costs)
-        cfg = AlertConfig(cooldown_bars=0) if isinstance(self.params, H2L2MomentumParams) else AlertConfig()
+        cfg = AlertConfig() if isinstance(self.params, SecondEntryParams) else AlertConfig(cooldown_bars=0)
         self.alerts = AlertEngine(cfg, explain=explain_alert,
                                   evidence_provider=(lambda s: self.evidence) if self.evidence else None)
         self.cursor = 0  # quantidade de candles já revelados

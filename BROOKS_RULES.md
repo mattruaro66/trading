@@ -34,3 +34,35 @@ o que o Brooks descreve → como o ATLAS aplica → estado.
 ## Limitações
 - O Brooks avisa que não há regras rígidas, só diretrizes, e que a leitura depende do contexto. Estas regras são uma tradução objetiva e verificável dessas diretrizes, não a leitura discricionária dele.
 - O limite de 25% do range diário vem de um exemplo do livro (3 pontos para um range de 10–15 pontos), não de uma regra explícita.
+
+## Estratégia C — Método Brooks (regras de execução)
+
+`backend/atlas/strategy/brooks_method.py` transforma os conceitos em 20 setups executáveis (S1–S20), com filtros de contexto e gestão do Brooks. Testes: `backend/tests/test_strategy_brooks_method.py`. **Experimental:** serve para validar o método em simulação.
+
+| Setup | Conceito do glossário | Regra |
+|---|---|---|
+| S1 | High/Low 2, second entry | H2/L2 a favor da tendência e do always in |
+| S2 | Small pullback trend, strong trend | H1/L1 com ≥90% dos fechamentos do lado da EMA ou após barra-surpresa |
+| S3/S4 | Wedge flag, H3/H4 | H3/L3 e H4/L4 a favor, no 1º sinal |
+| S5 | Trading range: H1/H2 perto do fundo | Range comum (não tight): H1/H2 no terço inferior (L1/L2 no superior) |
+| S6 | Double bottom bull flag / double top bear flag | Mínima a ≤0,15 ATR de um swing low de 3–20 barras atrás, barra de alta |
+| S7 | Micro double bottom/top, ledge | Mínimas iguais (±1 tick) em barras seguidas, a favor |
+| S8 | Breakout pullback | H1/L1 até 5 barras após rompimento confirmado; swing mira medida do range |
+| S9 | Failed failure | Rompimento que falhou retoma com trend bar forte em até 3 barras |
+| S10 | Failed breakout / five-tick failure | Em range: excede o extremo de 40 barras e fecha de volta com barra de reversão |
+| S11 | First moving average gap bar | 1ª barra sem tocar a EMA no pullback de uma tendência com ≥10 barras |
+| S12 | 20 moving average gap bars | 1º toque na EMA após ≥20 barras sem tocá-la |
+| S13 | Wedge reversal (2º sinal) | Três swings consecutivos e L2/H2 contra a tendência |
+| S14 | Major trend reversal | Trend bar forte rompe a EMA e, em 3–40 barras, o extremo é testado com barra de reversão |
+| S15 | ii / ioi (breakout mode) | Entrada a favor do always in |
+| S16 | Gap reversal / opening reversal | 1º candle com gap; ordem além da mínima/máxima dele |
+| S17 | Trend from the open | Duas trend bars fortes nas 2 primeiras barras → a mercado |
+| S18 | Spike, buy/sell the close | Duas trend bars fortes rompendo as 10 barras anteriores → a mercado |
+| S19 | Surprise bar (2ª perna) | H1/L1 até 10 barras após barra ≥2 ATR |
+| S20 | Micro channel | H1/L1 até 3 barras após micro canal de ≥5 barras |
+
+**Filtros:** tight trading range, micro canal contrário, clímax (barra ≥3 ATR em tendência madura → 10 barras sem entradas a favor), equação do trader (risco de 2 ticks a 2,5 ATR), dados válidos.
+
+**Gestão:** stop 1 tick além da barra de sinal; lote scalp 1R + lote swing 2R ou medida do movimento; stop do swing no zero a zero após o scalp; posição zerada no fim do pregão.
+
+**Fora das regras de execução**, por não serem setups: participantes (instituições, HFT), notícias, filosofia (não há regras fixas), tempo gráfico maior/menor (o projeto opera só em 5 min), tamanho de posição e conta.
