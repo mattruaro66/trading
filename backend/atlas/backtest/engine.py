@@ -19,7 +19,14 @@ from atlas.pipeline import AnalysisPipeline
 from atlas.price_action.engine import ENGINE_VERSION, PriceActionParams
 from atlas.probability.events import describe_event, estimate_target_first
 from atlas.probability.stats import DEFAULT_MIN_SAMPLE, compute_stats, distribution, equity_curve, group_stats
+from atlas.strategy import h2l2_momentum as _h2l2
 from atlas.strategy.second_entry import STRATEGY_ID, STRATEGY_VERSION, SecondEntryParams
+
+
+def _strategy_ids(params) -> tuple[str, str]:
+    if isinstance(params, _h2l2.H2L2MomentumParams):
+        return _h2l2.STRATEGY_ID, _h2l2.STRATEGY_VERSION
+    return STRATEGY_ID, STRATEGY_VERSION
 
 DISCLAIMER = ("Resultados de simulação histórica com premissas documentadas (política intrabar conservadora, slippage "
               "fixo). Não constituem garantia de execução, de rentabilidade nem recomendação de investimento.")
@@ -82,9 +89,10 @@ def run_backtest(bars: list[Bar], symbol: Symbol | str, params: SecondEntryParam
     synthetic = any(b.synthetic for b in bars)
     sources = sorted({b.source for b in bars})
     contracts = sorted({b.contract or "continuous" for b in bars})
-    event = describe_event(sym.value, STRATEGY_ID, params.target_r, params.time_exit_bars)
+    sid, sver = _strategy_ids(params)
+    event = describe_event(sym.value, sid, params.target_r, params.time_exit_bars)
     fp = data_fingerprint(bars)
-    config = {"strategy_id": STRATEGY_ID, "strategy_version": STRATEGY_VERSION, "engine_version": ENGINE_VERSION,
+    config = {"strategy_id": sid, "strategy_version": sver, "engine_version": ENGINE_VERSION,
               "params": params.model_dump(mode="json"), "costs": costs.model_dump(), "train_fraction": train_fraction,
               "min_sample": min_sample, "data_fingerprint": fp}
     run_id = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:20]

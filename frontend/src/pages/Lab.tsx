@@ -99,6 +99,7 @@ function SyntheticCard({ onDone }: { onDone: () => void }) {
 function BacktestCard({ datasets, onRun }: { datasets: any[]; onRun: () => void }) {
   const [ds, setDs] = useState("");
   const [profile, setProfile] = useState("daytrade");
+  const [strategy, setStrategy] = useState("h2l2_scale_momentum");
   const [stopMode, setStopMode] = useState("signal_bar");
   const [targetR, setTargetR] = useState<string>("");
   const [brokerage, setBrokerage] = useState(0);
@@ -114,9 +115,10 @@ function BacktestCard({ datasets, onRun }: { datasets: any[]; onRun: () => void 
   const cur = useMemo(() => datasets.find((d) => `${d.symbol}|${d.contract}` === ds), [datasets, ds]);
 
   function body() {
-    const params: any = { profile, stop_mode: stopMode };
-    if (targetR) params.target_r = parseFloat(targetR);
+    const params: any = strategy === "second_entry_trend" ? { profile, stop_mode: stopMode } : {};
+    if (targetR && strategy === "second_entry_trend") params.target_r = parseFloat(targetR);
     return {
+      strategy_id: strategy,
       symbol: cur.symbol, contract: cur.contract, params, train_fraction: trainFrac, min_sample: minSample,
       costs: { contracts, brokerage_per_contract_side: brokerage, exchange_fees_per_contract_side: fees, entry_slippage_ticks: slip, exit_slippage_ticks: slip },
     };
@@ -127,16 +129,21 @@ function BacktestCard({ datasets, onRun }: { datasets: any[]; onRun: () => void 
   }
   async function runWf() {
     setBusy(true); setError(null);
-    try { setWf(await post("/api/backtest/walk-forward", { ...body(), grid: { target_r: [1, 1.5, 2], stop_mode: ["signal_bar", "pullback_low"] }, folds: 4 })); }
+    const grid = strategy === "second_entry_trend" ? { target_r: [1, 1.5, 2], stop_mode: ["signal_bar", "pullback_low"] }
+      : { enable_momentum: [true, false], enable_big_bar: [true, false] };
+    try { setWf(await post("/api/backtest/walk-forward", { ...body(), grid, folds: 4 })); }
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   }
 
   return (
     <div className="card space-y-3">
-      <div className="font-semibold">Backtest — Estratégia A: Second Entry em tendência (5 min)</div>
+      <div className="font-semibold">Backtest (5 min)</div>
       <div className="flex flex-wrap gap-3 items-end text-sm">
         <div className="flex flex-col"><span className="label">Dados</span><DatasetPicker datasets={datasets} value={ds} onChange={setDs} /></div>
-        <div className="flex flex-col"><span className="label">Perfil</span>
+        <div className="flex flex-col"><span className="label">Estratégia</span>
+          <select className="input" value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+            <option value="h2l2_scale_momentum">B · H2/L2 + H3/L3 + momento</option><option value="second_entry_trend">A · Second Entry</option></select></div>
+        <div className="flex flex-col"><span className="label">Perfil (só A)</span>
           <select className="input" value={profile} onChange={(e) => setProfile(e.target.value)}><option value="daytrade">Day trade</option><option value="scalp">Scalp</option></select></div>
         <div className="flex flex-col"><span className="label">Stop</span>
           <select className="input" value={stopMode} onChange={(e) => setStopMode(e.target.value)}><option value="signal_bar">Barra de sinal</option><option value="pullback_low">Extremo do pullback</option></select></div>

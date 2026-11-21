@@ -74,6 +74,11 @@ class Signal:
     pullback_start_ts: datetime | None
     criteria: tuple[Criterion, ...]
     context: dict = field(default_factory=dict)
+    order_type: str = "stop"  # stop (aciona no preço) | market (abertura do próximo candle)
+    lot_role: str = "entry"  # entry | add (aumento de mão)
+    stop_points: float | None = None  # se definido, stop/alvo são fixos em pontos a partir do preço de execução
+    target_points: float | None = None
+    max_bars_valid: int = 1
 
     @property
     def signal_ts(self) -> datetime:

@@ -34,7 +34,9 @@ from atlas.persistence.repository import Repository
 from atlas.price_action.engine import ENGINE_VERSION
 from atlas.replay.session import ReplaySession
 from atlas.reporting.serialize import bar_dict, json_safe
+from atlas.strategy import h2l2_momentum as h2l2
 from atlas.strategy.second_entry import PROFILES, SPEC, STRATEGY_VERSION, SecondEntryParams, SecondEntryStrategy
+from atlas.pipeline import make_strategy
 
 SYNTHETIC_SUFFIX = "_SINTETICO"
 NO_ORDERS = "O ATLAS B3 não executa ordens: plataforma de pesquisa, monitoramento e simulação."
@@ -56,6 +58,7 @@ def _dt(s: str | None) -> datetime | None:
 
 # ----------------------------------------------------------------------------------------------
 class StrategyRequest(BaseModel):
+    strategy_id: str = "second_entry_trend"
     symbol: str
     contract: str
     start: str | None = None
@@ -72,6 +75,7 @@ class WalkForwardRequest(StrategyRequest):
 
 
 class ReplayRequest(BaseModel):
+    strategy_id: str = "second_entry_trend"
     symbol: str
     contract: str
     start: str | None = None
@@ -103,9 +107,12 @@ class LiveStartRequest(BaseModel):
     speed: float = Field(0.0, ge=0)
 
 
-def _params(symbol: Symbol, raw: dict) -> SecondEntryParams:
+def _params(symbol: Symbol, raw: dict, strategy_id: str = "second_entry_trend"):
+    cls = {"second_entry_trend": SecondEntryParams, h2l2.STRATEGY_ID: h2l2.H2L2MomentumParams}.get(strategy_id)
+    if cls is None:
+        raise HTTPException(422, f"Estratégia desconhecida: {strategy_id}")
     try:
-        return SecondEntryParams(**raw)
+        return cls(**raw)
     except Exception as e:
         raise HTTPException(422, f"Parâmetros inválidos: {e}")
 
@@ -147,9 +154,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, f"Nenhum candle armazenado para {symbol.value} {contract} no período.")
         return bars
 
-    def _evidence(symbol: Symbol, params: SecondEntryParams, run_id: str | None = None) -> dict | None:
-        ph = SecondEntryStrategy(symbol, params).params_hash
-        r = repo.get_backtest(run_id) if run_id else repo.latest_backtest_for(symbol.value, SPEC.strategy_id, STRATEGY_VERSION, ph)
+    def _evidence(symbol: Symbol, params, run_id: str | None = None) -> dict | None:
+        strat = make_strategy(symbol, params)
+        ph = strat.params_hash
+        r = repo.get_backtest(run_id) if run_id else repo.latest_backtest_for(symbol.value, strat.spec.strategy_id, strat.spec.version, ph)
         if not r:
             return None
         return {"run_id": r["run_id"], "period": f"{r['meta']['first_ts'][:10]} a {r['meta']['last_ts'][:10]}",
@@ -272,16 +280,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"strategies": [{"spec": SPEC.as_dict(), "profiles": PROFILES,
                                 "params_schema": SecondEntryParams.model_json_schema(),
                                 "defaults": SecondEntryParams().model_dump(mode="json"),
+                                "costs_schema": CostModel.model_json_schema(), "costs_defaults": CostModel().model_dump()},
+                               {"spec": h2l2.SPEC.as_dict(), "profiles": {},
+                                "params_schema": h2l2.H2L2MomentumParams.model_json_schema(),
+                                "defaults": h2l2.H2L2MomentumParams().model_dump(mode="json"),
                                 "costs_schema": CostModel.model_json_schema(), "costs_defaults": CostModel().model_dump()}]}
 
     @app.post("/api/backtest/run")
     def backtest(req: StrategyRequest):
         sym = _sym(req.symbol)
-        params, costs = _params(sym, req.params), _costs(req.costs)
+        params, costs = _params(sym, req.params, req.strategy_id), _costs(req.costs)
         bars = _load(sym, req.contract, req.start, req.end)
         res = run_backtest(bars, sym, params, costs, train_fraction=req.train_fraction, min_sample=req.min_sample)
-        strat = SecondEntryStrategy(sym, params)
-        repo.register_strategy_version(SPEC.strategy_id, STRATEGY_VERSION, strat.params_hash, SPEC.as_dict(),
+        strat = make_strategy(sym, params)
+        repo.register_strategy_version(strat.spec.strategy_id, strat.spec.version, strat.params_hash, strat.spec.as_dict(),
                                        strat.resolved_params())
         res = json_safe(res)
         repo.save_backtest(res, strat.params_hash)
@@ -290,8 +302,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/backtest/walk-forward")
     def wf(req: WalkForwardRequest):
         sym = _sym(req.symbol)
-        params, costs = _params(sym, req.params), _costs(req.costs)
-        allowed = set(SecondEntryParams.model_fields)
+        params, costs = _params(sym, req.params, req.strategy_id), _costs(req.costs)
+        allowed = set(type(params).model_fields)
         bad = set(req.grid) - allowed
         if bad:
             raise HTTPException(422, f"Parâmetros desconhecidos na grade: {sorted(bad)}")
@@ -332,7 +344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/replay/sessions")
     def replay_create(req: ReplayRequest):
         sym = _sym(req.symbol)
-        params, costs = _params(sym, req.params), _costs(req.costs)
+        params, costs = _params(sym, req.params, req.strategy_id), _costs(req.costs)
         bars = _load(sym, req.contract, req.start, req.end)
         if len(state.replays) >= 20:
             state.replays.pop(next(iter(state.replays)))

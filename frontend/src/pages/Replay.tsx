@@ -37,6 +37,7 @@ export default function Replay() {
   const { datasets } = useDatasets();
   const [ds, setDs] = useState("");
   const [profile, setProfile] = useState("daytrade");
+  const [strategy, setStrategy] = useState("h2l2_scale_momentum");
   const [session, setSession] = useState<any>(null);
   const [bars, setBars] = useState<BarDTO[]>([]);
   const [markers, setMarkers] = useState<ChartMarker[]>([]);
@@ -59,7 +60,7 @@ export default function Replay() {
     setError(null);
     setPlaying(false);
     try {
-      const s = await post<any>("/api/replay/sessions", { symbol: current.symbol, contract: current.contract, params: { profile } });
+      const s = await post<any>("/api/replay/sessions", { symbol: current.symbol, contract: current.contract, strategy_id: strategy, params: strategy === "second_entry_trend" ? { profile } : {} });
       setSession(s);
       setBars([]);
       setMarkers([]);
@@ -152,7 +153,13 @@ export default function Replay() {
     <div className="space-y-3">
       <div className="card flex flex-wrap items-end gap-3">
         <div className="flex flex-col"><span className="label">Conjunto de dados</span><DatasetPicker datasets={datasets} value={ds} onChange={setDs} /></div>
-        <div className="flex flex-col"><span className="label">Perfil (5 min)</span>
+        <div className="flex flex-col"><span className="label">Estratégia</span>
+          <select className="input" value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+            <option value="h2l2_scale_momentum">B · H2/L2 + aumento H3/L3 + momento (stop 200 / alvo 300)</option>
+            <option value="second_entry_trend">A · Second Entry em tendência</option>
+          </select>
+        </div>
+        <div className="flex flex-col" hidden={strategy !== "second_entry_trend"}><span className="label">Perfil (5 min)</span>
           <select className="input" value={profile} onChange={(e) => setProfile(e.target.value)}>
             <option value="daytrade">Day trade (2R, 24 candles)</option>
             <option value="scalp">Scalp (1R, 6 candles)</option>

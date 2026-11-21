@@ -115,3 +115,18 @@ def test_api_contracts_providers_knowledge(client):
 def test_api_no_order_endpoints(client):
     paths = [r.path for r in client.app.routes]
     assert not any(w in p.lower() for p in paths for w in ("order", "ordem", "execute", "broker"))
+
+
+def test_api_user_strategy_backtest_and_replay_orders(client):
+    contract = client.post("/api/data/synthetic", json={"symbol": "WIN", "contract": "WINK26", "sessions": 15, "seed": 33}).json()["contract"]
+    sids = [s["spec"]["strategy_id"] for s in client.get("/api/strategies").json()["strategies"]]
+    assert "h2l2_scale_momentum" in sids
+    bt = client.post("/api/backtest/run", json={"strategy_id": "h2l2_scale_momentum", "symbol": "WIN", "contract": contract,
+                                                "min_sample": 5}).json()
+    assert bt["config"]["strategy_id"] == "h2l2_scale_momentum" and bt["trades"]
+    assert {t["setup"] for t in bt["trades"]} & {"H2", "L2", "3 BARRAS", "BARRA 2x"}
+    rp = client.post("/api/replay/sessions", json={"strategy_id": "h2l2_scale_momentum", "symbol": "WIN", "contract": contract}).json()
+    st = client.post(f"/api/replay/sessions/{rp['session_id']}/step", json={"n": 500}).json()
+    orders = [o for s in st["steps"] for e in s["exec_events"] for o in e["orders"]]
+    assert orders and all(o["simulated"] for o in orders)
+    assert client.post("/api/backtest/run", json={"strategy_id": "xyz", "symbol": "WIN", "contract": contract}).status_code == 422

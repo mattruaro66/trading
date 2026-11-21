@@ -1,0 +1,268 @@
+"""Simulador de execução com VÁRIOS LOTES (aumento de mão), cada lote com stop e alvo próprios em OCO.
+
+Usado por estratégias que adicionam contratos (ex.: H2 + aumento no H3). Ordens são SIMULADAS
+(``SimOrder``); nada é enviado a corretora/bolsa. Mesma política conservadora do ``TradeSimulator``:
+* stop tocado no candle de entrada → stop;
+* stop e alvo no mesmo candle → stop;
+* gap além do stop → saída na abertura; gap além do alvo → saída no alvo;
+* fim da sessão / lacuna de dados → saída a mercado de todos os lotes.
+
+Preço de referência do bracket (stop/alvo em pontos fixos): o preço da ordem de entrada (ordens stop)
+ou a abertura do candle (ordens a mercado e entradas em gap) — antes do slippage.
+"""
+from __future__ import annotations
+
+import itertools
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+
+from atlas.backtest.costs import CostModel
+from atlas.backtest.execution import EXIT_REASON_PT, ExecEvent, SimOrder, Trade
+from atlas.contracts.calendar import TradingCalendar, load_calendar
+from atlas.contracts.specs import get_spec
+from atlas.core.timeframe import TZ
+from atlas.core.types import Bar, Side
+from atlas.market_data.validation import is_contiguous
+from atlas.strategy.base import Signal
+
+
+@dataclass
+class _Pending:
+    signal: Signal
+    placed_after: Bar
+    group: int
+    order: SimOrder
+
+
+@dataclass
+class BracketSimulator:
+    symbol: str
+    costs: CostModel = field(default_factory=CostModel)
+    flatten_minutes_before_close: int = 5
+    calendar: TradingCalendar | None = None
+    max_lots: int = 2
+
+    def __post_init__(self) -> None:
+        self.cal = self.calendar or load_calendar()
+        self.spec = get_spec(self.symbol)
+        self.pending: list[_Pending] = []
+        self.lots: list[Trade] = []
+        self.closed: list[Trade] = []
+        self.orders: list[SimOrder] = []
+        self.prev_bar: Bar | None = None
+        self.realized_brl = 0.0
+        self._ids = itertools.count(1)
+        self._order_ids = itertools.count(1)
+        self._groups = itertools.count(1)
+        self._working: dict[int, dict[str, SimOrder]] = {}  # grupo → função → ordem
+        self._lot_group: dict[int, int] = {}  # trade_id → grupo
+
+    # ------------------------------------------------------------------ estado
+    @property
+    def open_trade(self) -> Trade | None:  # compatibilidade com o TradeSimulator
+        return self.lots[0] if self.lots else None
+
+    @property
+    def side(self) -> Side | None:
+        if self.lots:
+            return self.lots[0].side
+        if self.pending:
+            return self.pending[0].signal.side
+        return None
+
+    def exposure(self) -> int:
+        return len(self.lots) + len(self.pending)
+
+    def lots_from(self, setup_key: str) -> list[Trade]:
+        return [t for t in self.lots if t.signal.setup_key == setup_key]
+
+    def position(self, last: Bar | None = None) -> dict:
+        bar = last or self.prev_bar
+        working = [o.as_dict() for g in self._working.values() for o in g.values()]
+        base = {"realized_brl": round(self.realized_brl, 2), "closed_trades": len(self.closed), "working_orders": working}
+        if not self.lots:
+            return {**base, "state": "pending_entry" if self.pending else "flat"}
+        q = self.costs.contracts
+        side = self.lots[0].side
+        mark = bar.close if bar else self.lots[0].entry_price
+        avg = sum(t.entry_price for t in self.lots) / len(self.lots)
+        pts = round(sum((mark - t.entry_price) * t.side.sign for t in self.lots), 10)
+        return {**base, "state": "long" if side is Side.LONG else "short", "qty": q * len(self.lots),
+                "entry_price": round(avg, 2), "mark_price": mark, "unrealized_points": pts,
+                "unrealized_brl": self.spec.pnl_brl(pts, q),
+                "stop_price": self.lots[-1].stop_price, "target_price": self.lots[-1].target_price,
+                "bars_held": max(t.bars_held for t in self.lots), "setup": "+".join(t.signal.setup_label for t in self.lots),
+                "lots": [{"setup": t.signal.setup_label, "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price}
+                         for t in self.lots]}
+
+    # ------------------------------------------------------------------ ordens
+    def _order(self, group: int, role: str, action: str, otype: str, price: float | None, ts: datetime, setup: str,
+               note: str = "") -> SimOrder:
+        o = SimOrder(next(self._order_ids), group, role, action, otype, self.costs.contracts, price, ts, note=note, setup=setup)
+        self.orders.append(o)
+        self._working.setdefault(group, {})[role] = o
+        return o
+
+    def _finish(self, group: int, role: str, status: str, ts: datetime, fill: float | None = None, note: str = ""):
+        o = self._working.get(group, {}).pop(role, None)
+        if o is None:
+            return None
+        o.status, o.done_ts, o.fill_price = status, ts, fill
+        if note:
+            o.note = note
+        if not self._working.get(group):
+            self._working.pop(group, None)
+        return o
+
+    @staticmethod
+    def _snap(*orders) -> tuple:
+        return tuple(o.as_dict() for o in orders if o is not None)
+
+    def submit(self, signal: Signal, signal_bar: Bar) -> ExecEvent:
+        if self.side is not None and self.side is not signal.side:
+            return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="opposite_position")
+        if self.exposure() >= self.max_lots:
+            return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="max_lots")
+        g = next(self._groups)
+        action = "buy" if signal.side is Side.LONG else "sell"
+        role = "entry"
+        if signal.order_type == "market":
+            o = self._order(g, role, action, "market", None, signal_bar.ts_close, signal.setup_label,
+                            ("aumento de mão · " if signal.lot_role == "add" else "") + "a mercado na abertura do próximo candle")
+        else:
+            o = self._order(g, role, action, "stop", signal.entry_price, signal_bar.ts_close, signal.setup_label,
+                            ("aumento de mão · " if signal.lot_role == "add" else "") + "válida somente no próximo candle de 5 min")
+        self.pending.append(_Pending(signal, signal_bar, g, o))
+        return ExecEvent("order_placed", signal_bar.ts_close, signal, orders=self._snap(o))
+
+    # ------------------------------------------------------------------ candle
+    def _flatten_time(self, bar: Bar) -> bool:
+        s = self.cal.session(bar.symbol, bar.ts_open.astimezone(TZ).date())
+        return s is None or bar.ts_close >= s.close - timedelta(minutes=self.flatten_minutes_before_close)
+
+    def on_bar(self, bar: Bar) -> list[ExecEvent]:
+        events: list[ExecEvent] = []
+        prev = self.prev_bar
+        contiguous = prev is not None and is_contiguous(prev, bar)
+        if self.lots and not contiguous:
+            for t in list(self.lots):
+                px = self.spec.round_to_tick(prev.close - t.side.sign * self.spec.ticks(self.costs.exit_slippage_ticks),
+                                             "down" if t.side is Side.LONG else "up")
+                events.append(self._exit(t, prev.ts_close, px, "data_gap_exit"))
+        existing = list(self.lots)
+        pend, self.pending = self.pending, []
+        for p in pend:
+            if not contiguous or p.placed_after is not prev:
+                o = self._finish(p.group, "entry", "cancelled", bar.ts_open, note="candle seguinte ausente/não contíguo")
+                events.append(ExecEvent("order_cancelled", bar.ts_open, p.signal, reason="next_bar_not_contiguous",
+                                        orders=self._snap(o)))
+            else:
+                events.extend(self._try_fill(p, bar))
+        for t in existing:
+            if t in self.lots:
+                ev = self._manage(t, bar, entry_bar=False)
+                if ev:
+                    events.append(ev)
+        self.prev_bar = bar
+        return events
+
+    def _try_fill(self, p: _Pending, bar: Bar) -> list[ExecEvent]:
+        s = p.signal
+        sign = s.side.sign
+        slip = self.spec.ticks(self.costs.entry_slippage_ticks + self.costs.spread_ticks)
+        gap = False
+        if s.order_type == "market":
+            ref = bar.open
+        elif s.side is Side.LONG:
+            if bar.open >= s.entry_price:
+                ref, gap = bar.open, True
+            elif bar.high >= s.entry_price:
+                ref = s.entry_price
+            else:
+                ref = None
+        else:
+            if bar.open <= s.entry_price:
+                ref, gap = bar.open, True
+            elif bar.low <= s.entry_price:
+                ref = s.entry_price
+            else:
+                ref = None
+        if ref is None:
+            o = self._finish(p.group, "entry", "expired", bar.ts_close, note="preço não atingido no candle seguinte")
+            return [ExecEvent("order_expired", bar.ts_close, s, reason="not_triggered", orders=self._snap(o))]
+        fill = self.spec.round_to_tick(ref + sign * slip, "up" if sign > 0 else "down")
+        if s.stop_points is not None:
+            stop = self.spec.round_to_tick(ref - sign * s.stop_points)
+            target = self.spec.round_to_tick(ref + sign * s.target_points)
+        else:
+            stop, target = s.stop_price, s.target_price
+        t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, stop, target, entry_gap=gap)
+        self.lots.append(t)
+        self._lot_group[t.trade_id] = p.group
+        entry = self._finish(p.group, "entry", "filled", bar.ts_open, fill, "gap de abertura" if gap else "")
+        exit_action = "sell" if s.side is Side.LONG else "buy"
+        sl = self._order(p.group, "stop_loss", exit_action, "stop", stop, bar.ts_open, s.setup_label, "OCO com o alvo deste lote")
+        tp = self._order(p.group, "take_profit", exit_action, "limit", target, bar.ts_open, s.setup_label, "OCO com o stop deste lote")
+        events = [ExecEvent("filled", bar.ts_open, s, t, orders=self._snap(entry, sl, tp))]
+        ev = self._manage(t, bar, entry_bar=True)
+        if ev:
+            events.append(ev)
+        return events
+
+    def _manage(self, t: Trade, bar: Bar, entry_bar: bool) -> ExecEvent | None:
+        sign = t.side.sign
+        slip_out = self.spec.ticks(self.costs.exit_slippage_ticks + self.costs.spread_ticks)
+        slip_tgt = self.spec.ticks(self.costs.target_slippage_ticks)
+        t.bars_held += 1
+        t.mfe_points = max(t.mfe_points, (bar.high - t.entry_price) if sign > 0 else (t.entry_price - bar.low))
+        t.mae_points = max(t.mae_points, (t.entry_price - bar.low) if sign > 0 else (bar.high - t.entry_price))
+        stop_hit = bar.low <= t.stop_price if sign > 0 else bar.high >= t.stop_price
+        tgt_hit = bar.high >= t.target_price if sign > 0 else bar.low <= t.target_price
+        px = reason = None
+        if not entry_bar:
+            if (bar.open <= t.stop_price) if sign > 0 else (bar.open >= t.stop_price):
+                px, reason = bar.open - sign * slip_out, "stop_gap"
+            elif (bar.open >= t.target_price) if sign > 0 else (bar.open <= t.target_price):
+                px, reason = t.target_price - sign * slip_tgt, "target_gap"
+        if reason is None:
+            if stop_hit:
+                px, reason = t.stop_price - sign * slip_out, "stop"
+                t.ambiguous_bar = tgt_hit
+            elif tgt_hit:
+                px, reason = t.target_price - sign * slip_tgt, "target"
+            elif t.signal.time_exit_bars and t.bars_held >= t.signal.time_exit_bars:
+                px, reason = bar.close - sign * slip_out, "time_exit"
+            elif self._flatten_time(bar):
+                px, reason = bar.close - sign * slip_out, "session_end"
+        if reason is None:
+            return None
+        px = self.spec.round_to_tick(px, "down" if sign > 0 else "up")
+        return self._exit(t, bar.ts_close, px, reason)
+
+    def _exit(self, t: Trade, ts: datetime, px: float, reason: str) -> ExecEvent:
+        g = self._lot_group[t.trade_id]
+        t.exit_ts, t.exit_price, t.exit_reason = ts, px, reason
+        t.points = round((px - t.entry_price) * t.side.sign, 10)
+        q = self.costs.contracts
+        t.gross_brl = self.spec.pnl_brl(t.points, q)
+        t.costs_brl = self.costs.round_trip_fees()
+        t.net_brl = round(t.gross_brl - t.costs_brl, 2)
+        risk = abs(t.entry_price - t.stop_price) or t.signal.risk_points
+        t.r_multiple = round(t.points / risk, 4) if risk else None
+        risk_brl = self.spec.pnl_brl(risk, q)
+        t.net_r = round(t.net_brl / risk_brl, 4) if risk_brl else None
+        self.lots.remove(t)
+        self.closed.append(t)
+        self.realized_brl += t.net_brl
+        if reason in ("stop", "stop_gap"):
+            orders = self._snap(self._finish(g, "stop_loss", "filled", ts, px), self._finish(g, "take_profit", "cancelled", ts, note="OCO: stop executado"))
+        elif reason in ("target", "target_gap"):
+            orders = self._snap(self._finish(g, "take_profit", "filled", ts, px), self._finish(g, "stop_loss", "cancelled", ts, note="OCO: alvo executado"))
+        else:
+            why = EXIT_REASON_PT.get(reason, reason)
+            a = self._finish(g, "stop_loss", "cancelled", ts, note=f"saída por {why}")
+            b = self._finish(g, "take_profit", "cancelled", ts, note=f"saída por {why}")
+            m = self._order(g, "market_exit", "sell" if t.side is Side.LONG else "buy", "market", None, ts, t.signal.setup_label, f"saída por {why}")
+            self._finish(g, "market_exit", "filled", ts, px)
+            orders = self._snap(a, b, m)
+        return ExecEvent("closed", ts, t.signal, t, reason, orders=orders)

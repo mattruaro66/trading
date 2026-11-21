@@ -44,7 +44,9 @@ def explain_alert(payload: dict) -> dict:
     concepts = [get_concept(c) for c in ("trend_vs_range", "high1_high2", "second_entry", "signal_bar")]
     b = {
         "title": "B. Interpretação segundo Al Brooks",
-        "text": (f"Configuração de segunda entrada ({setup}) a favor da tendência. As ideias abaixo são resumos do ATLAS "
+        "text": ((f"Estratégia do usuário (H2/L2 + aumento no H3/L3 + momento): setup {setup} a favor da tendência."
+                  if payload.get("strategy_id") == "h2l2_scale_momentum" else
+                  f"Configuração de segunda entrada ({setup}) a favor da tendência.") + " As ideias abaixo são resumos do ATLAS "
                  "sobre conceitos de Brooks (não são citações literais), seguidos de como o ATLAS os implementa."),
         "items": [{"concept": c.name, "author_concept": c.author_concept, "atlas_interpretation": c.atlas_interpretation,
                    "quant_rule": c.quant_rule,
@@ -80,6 +82,20 @@ def explain_alert(payload: dict) -> dict:
     else:
         text = "Evidência estatística insuficiente para estimar uma probabilidade confiável. Nenhum backtest compatível foi associado a este alerta."
     e = {"title": "E. Evidência quantitativa", "text": text}
+    if sig.get("order_type") == "market" or sig.get("stop_points"):
+        acao = "compra" if side == "long" else "venda"
+        if sig.get("order_type") == "market":
+            entrada = (f"Ordem de {acao} a mercado na abertura do próximo candle de 5 min (referência: fechamento "
+                       f"{_f(sig.get('entry_price'))}).")
+        else:
+            entrada = (f"Ordem stop de {acao} em {_f(sig.get('entry_price'))}, válida só no próximo candle de 5 min.")
+        if sig.get("lot_role") == "add":
+            entrada = "Aumento de mão (+1 contrato). " + entrada
+        f_text = (f"{entrada} Stop de {_f(sig.get('stop_points'), 0)} pontos e alvo de {_f(sig.get('target_points'), 0)} pontos "
+                  f"a partir do preço de execução (referência: stop {_f(sig.get('stop_price'))}, alvo {_f(sig.get('target_price'))}). "
+                  "Sem saída por tempo; posição zerada no fim da sessão.")
+        return {"language": "pt-BR", "generator": "deterministic-v1", "sections": [a, b, c, d, e,
+                {"title": "F. Cenário hipotético", "text": f_text}, {"title": "G. Limitações", "items": _limits(payload)}]}
     f = {
         "title": "F. Cenário hipotético",
         "text": (f"Confirmação: o candle seguinte {'ultrapassar' if side == 'long' else 'perder'} {_f(sig.get('entry_price'))} "
@@ -89,11 +105,15 @@ def explain_alert(payload: dict) -> dict:
                  f"{sig.get('time_exit_bars')} candles. Invalidação: ordem não acionada no candle seguinte, lacuna de dados, "
                  "ou toque no stop."),
     }
+    g = {"title": "G. Limitações", "items": _limits(payload)}
+    return {"language": "pt-BR", "generator": "deterministic-v1", "sections": [a, b, c, d, e, f, g]}
+
+
+def _limits(payload: dict) -> list[str]:
     lim = ["A classificação de regime é uma aproximação quantitativa da leitura contextual de Brooks.",
            "Sem dados intrabar, stop e alvo no mesmo candle são resolvidos como stop (conservador).",
            "Fluxo de ordens (agressão, livro) não é utilizado: os dados são apenas OHLCV.",
            "Contexto macroeconômico não integrado."]
     if payload.get("synthetic_data"):
         lim.insert(0, "ESTE ALERTA FOI GERADO SOBRE DADOS SINTÉTICOS (não reais).")
-    g = {"title": "G. Limitações", "items": lim}
-    return {"language": "pt-BR", "generator": "deterministic-v1", "sections": [a, b, c, d, e, f, g]}
+    return lim

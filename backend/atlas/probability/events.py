@@ -33,8 +33,10 @@ class EventProbability:
 
 
 def describe_event(symbol: str, strategy_id: str, target_r: float, time_exit_bars: int) -> str:
+    horizon = (f"em até {time_exit_bars} candles de 5 minutos após a entrada" if time_exit_bars
+               else "até o fim da sessão (candles de 5 minutos)")
     return (f"Probabilidade estimada de uma operação hipotética da estratégia '{strategy_id}' em {symbol} atingir "
-            f"o alvo de {target_r:g}R antes do stop de 1R, em até {time_exit_bars} candles de 5 minutos após a entrada "
+            f"o alvo de {target_r:g}R antes do stop de 1R, {horizon} "
             "(saídas por tempo, sessão ou lacuna contam como não-ocorrência).")
 
 
