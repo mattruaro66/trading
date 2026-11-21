@@ -177,22 +177,23 @@ Backtest, replay e live usam o mesmo `TradeSimulator`, que registra as ordens do
 - Sem dados intrabar, a política conservadora tende a **subestimar** resultados com alvos curtos.
 - Fila de ordens/liquidez no preço do stop não é modelada além do slippage fixo.
 
-## 6. Estratégia B — H2/L2 + aumento no H3/L3 + momento (definida pelo usuário)
+## 6. Estratégia B — H2/L2 + aumento no H3/L3 + momento (modelo experimental do usuário)
 
-`strategy_id = h2l2_scale_momentum`, `version = 1.0.0`, timeframe 5 min. Código: `backend/atlas/strategy/h2l2_momentum.py`; execução multilote: `backend/atlas/backtest/bracket_sim.py`; testes: `backend/tests/test_strategy_h2l2_momentum.py`.
+**Experimental:** usado para avaliar a capacidade de análise e execução do ATLAS no modelo simulado; não faz parte da versão final.
+`strategy_id = h2l2_scale_momentum`. Código: `backend/atlas/strategy/h2l2_momentum.py`; execução multilote: `backend/atlas/backtest/bracket_sim.py`; testes: `backend/tests/test_strategy_h2l2_momentum.py`.
 
-| Regra do usuário | Implementação [REGRA-QUANT] |
+| Regra do usuário | Execução |
 |---|---|
-| Compra/vende em H2/L2 | Ordem stop de 1 contrato 1 tick além da barra de sinal do H2/L2 (§4), válida 1 candle |
-| Aumenta a mão x1 no H3/L3 | Se o lote do H2/L2 do mesmo pullback estiver aberto: ordem stop de +1 contrato na barra de sinal do H3/L3. `max_lots = 2` |
-| Alvo 300 / stop 200 pontos | Por lote, a partir do preço da ordem de entrada (abertura em caso de gap ou ordem a mercado), antes do slippage; par OCO |
-| Sempre siga a tendência | Compras só em `BULL_TREND`, vendas só em `BEAR_TREND` (§3) |
-| 3 barras consecutivas → entra a favor | Fechamento da 3ª barra seguida com C>O (alta) ou C<O (baixa), na direção da tendência, sem posição → ordem a mercado na abertura seguinte |
-| Barra 2× a média das 7 anteriores → entra a favor | Amplitude > 2 × média das amplitudes das 7 barras anteriores, na direção da barra e da tendência, sem posição → ordem a mercado na abertura seguinte |
+| Compra/vende em H2/L2 | Ordem stop de 1 contrato 1 tick além da barra de sinal do H2/L2, válida 1 candle |
+| Aumenta a mão x1 no H3/L3 | Ordem stop de +1 contrato 1 tick além da barra de sinal do H3/L3 |
+| Alvo 300 / stop 200 pontos | Por lote, a partir do preço da ordem de entrada (abertura em gap ou ordem a mercado); par OCO |
+| Sempre siga a tendência | Compras só em `BULL_TREND`, vendas só em `BEAR_TREND` |
+| 3 barras consecutivas → entra a favor | Na 3ª barra seguida a favor da tendência → ordem a mercado na abertura seguinte |
+| Barra 2× a média das 7 anteriores → entra a favor | Barra a favor da tendência com amplitude > 2 × média das 7 anteriores → ordem a mercado na abertura seguinte |
 
-Complementos do ATLAS (configuráveis): prioridade H2/L2 → barra 2x → 3 barras no mesmo candle; entradas das 09:15 às 17:30; sem saída por tempo; posição zerada a mercado no fim do pregão; um único sentido de posição por vez.
-
-Interpretações a confirmar com o usuário: stop/alvo por lote (e não sobre o preço médio); entradas de momento apenas sem posição; a sequência de 3 barras usa só a direção do fechamento (sem exigir trend bars).
+Sem janela de horário, sem exigência de posição, sem limite de contratos e sem prioridade: toda regra que disparar é executada.
+Filtro adicional apenas no backtest simulado: sinais em candles com dados inválidos não são executados.
+Lotes abertos são zerados no fim do pregão (escopo day trade do projeto).
 
 ## 7. Estratégias futuras (não implementadas)
 B. Breakout Pullback · C. Failed Breakout em Trading Range · D. Continuação após rompimento com follow-through.

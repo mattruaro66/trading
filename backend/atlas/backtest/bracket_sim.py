@@ -40,7 +40,7 @@ class BracketSimulator:
     costs: CostModel = field(default_factory=CostModel)
     flatten_minutes_before_close: int = 5
     calendar: TradingCalendar | None = None
-    max_lots: int = 2
+    max_lots: int | None = None  # None = sem limite de contratos
 
     def __post_init__(self) -> None:
         self.cal = self.calendar or load_calendar()
@@ -83,16 +83,18 @@ class BracketSimulator:
         if not self.lots:
             return {**base, "state": "pending_entry" if self.pending else "flat"}
         q = self.costs.contracts
-        side = self.lots[0].side
+        net = sum(t.side.sign for t in self.lots)
+        side = Side.LONG if net > 0 else Side.SHORT if net < 0 else self.lots[0].side
         mark = bar.close if bar else self.lots[0].entry_price
         avg = sum(t.entry_price for t in self.lots) / len(self.lots)
         pts = round(sum((mark - t.entry_price) * t.side.sign for t in self.lots), 10)
-        return {**base, "state": "long" if side is Side.LONG else "short", "qty": q * len(self.lots),
+        return {**base, "state": "long" if net > 0 else "short" if net < 0 else "hedged", "qty": q * abs(net),
+                "lots_open": len(self.lots),
                 "entry_price": round(avg, 2), "mark_price": mark, "unrealized_points": pts,
                 "unrealized_brl": self.spec.pnl_brl(pts, q),
                 "stop_price": self.lots[-1].stop_price, "target_price": self.lots[-1].target_price,
                 "bars_held": max(t.bars_held for t in self.lots), "setup": "+".join(t.signal.setup_label for t in self.lots),
-                "lots": [{"setup": t.signal.setup_label, "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price}
+                "lots": [{"setup": t.signal.setup_label, "side": t.side.value, "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price}
                          for t in self.lots]}
 
     # ------------------------------------------------------------------ ordens
@@ -119,9 +121,7 @@ class BracketSimulator:
         return tuple(o.as_dict() for o in orders if o is not None)
 
     def submit(self, signal: Signal, signal_bar: Bar) -> ExecEvent:
-        if self.side is not None and self.side is not signal.side:
-            return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="opposite_position")
-        if self.exposure() >= self.max_lots:
+        if self.max_lots is not None and self.exposure() >= self.max_lots:
             return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="max_lots")
         g = next(self._groups)
         action = "buy" if signal.side is Side.LONG else "sell"

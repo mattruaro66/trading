@@ -50,7 +50,7 @@ class AnalysisPipeline:
         if getattr(self.strategy, "needs_position", False):
             self.sim = BracketSimulator(self.symbol.value, costs or CostModel(),
                                         self.strategy.params.flatten_minutes_before_close, self.cal,
-                                        max_lots=self.strategy.params.max_lots)
+                                        max_lots=None)
         else:
             self.sim = TradeSimulator(self.symbol.value, costs or CostModel(),
                                       self.strategy.params.flatten_minutes_before_close, self.cal)

@@ -196,7 +196,7 @@ class AlertEngine:
         if last is not None and self._bar_index - last <= self.config.cooldown_bars:
             self.suppressed.append({"ts": b.ts_close.isoformat(), "reason": "cooldown", "symbol": b.symbol.value})
             return
-        conf_key = f"{key}:confirmed:{b.ts_open.isoformat()}"
+        conf_key = f"{key}:{s.setup_label}:confirmed:{b.ts_open.isoformat()}"
         if conf_key in self.by_key:  # deduplicação
             return
         evidence = self._evidence(s) if self._evidence else None
