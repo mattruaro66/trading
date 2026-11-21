@@ -1,0 +1,33 @@
+{
+  "validated": false,
+  "validation_note": "Valores iniciais fornecidos no documento de requisitos do ATLAS B3. DEVEM ser conferidos com a página oficial de especificações de contratos da B3 antes de uso em pesquisa. Altere 'validated' para true apenas após a conferência, registrando a fonte em 'source'.",
+  "month_codes": {"F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6, "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12},
+  "specs": [
+    {
+      "symbol": "WIN",
+      "name": "Minicontrato Futuro de Ibovespa",
+      "version": "1",
+      "effective_from": "2000-01-01",
+      "tick_size": 5,
+      "point_value_brl": 0.20,
+      "price_decimals": 0,
+      "expiry_month_codes": ["G", "J", "M", "Q", "V", "Z"],
+      "expiry_rule": "wednesday_nearest_15th",
+      "expiry_rule_description": "Quarta-feira mais próxima do dia 15 do mês de vencimento; se não houver pregão, próximo dia de pregão. Último dia de negociação = data de vencimento. (a validar)",
+      "source": "Requisitos ATLAS B3 (valores iniciais a validar com a B3)"
+    },
+    {
+      "symbol": "WDO",
+      "name": "Minicontrato Futuro de Dólar Comercial",
+      "version": "1",
+      "effective_from": "2000-01-01",
+      "tick_size": 0.5,
+      "point_value_brl": 10.0,
+      "price_decimals": 1,
+      "expiry_month_codes": ["F", "G", "H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"],
+      "expiry_rule": "first_business_day",
+      "expiry_rule_description": "Vencimento no primeiro dia de pregão do mês de vencimento; último dia de negociação = pregão anterior ao vencimento. (a validar)",
+      "source": "Requisitos ATLAS B3 (valores iniciais a validar com a B3)"
+    }
+  ]
+}

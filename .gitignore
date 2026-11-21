@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+backend/data/atlas.db
+backend/data/store/
+backend/data/*.db
+.env
+node_modules/
+frontend/dist/
