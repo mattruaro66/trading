@@ -38,7 +38,7 @@ class ContractSpec:
 
     # ---- preço e ticks -------------------------------------------------
     def _d(self, x: float) -> Decimal:
-        return Decimal(repr(x))
+        return Decimal(repr(float(x)))  # float() normaliza escalares numpy
 
     def round_to_tick(self, price: float, mode: str = "nearest") -> float:
         """Arredonda ao tick. mode: nearest | down | up."""

@@ -97,8 +97,8 @@ trading/
 │   │   ├── knowledge/             # catálogo de conceitos Brooks + referências
 │   │   ├── macro/                 # modelo de eventos (fase 4)
 │   │   ├── persistence/           # SQLAlchemy models + repositórios
-│   │   └── api/                   # FastAPI (REST + WS)
-│   ├── scripts/                   # utilitários CLI (import, backtest, gerar dados SINTÉTICOS)
+│   │   ├── api/                   # FastAPI (REST + WS)
+│   │   └── cli.py                 # CLI (import, backtest, gerar dados SINTÉTICOS)
 │   └── tests/
 └── frontend/                      # React + Vite + Tailwind + lightweight-charts
 ```

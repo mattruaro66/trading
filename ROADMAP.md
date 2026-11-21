@@ -5,7 +5,7 @@ Regra geral: **uma fase só avança quando seus critérios de aceitação estão
 | Fase | Escopo | Critérios de saída | Status |
 |---|---|---|---|
 | **1 — MVP histórico** | Importação CSV/Parquet, validação OHLCV, contratos/ticks, gráficos 5 min, barras, regime, H1/H2/L1/L2, Estratégia A, backtest com custos, estatísticas + OOS, replay, alertas simulados, explicações determinísticas | Os 15 critérios de `TEST_PLAN.md §4` | Em andamento — ver checklist abaixo |
-| L — Live Data (A,B,D,E,F) | Interface de provedor, eventos canônicos, CandleEngine, Replay/CSV providers, qualidade de dados, supervisão de conexão, WS | `LIVE_DATA_TEST_PLAN.md` | A, B, E implementadas; D parcial; F parcial |
+| L — Live Data (A,B,D,E,F) | Interface de provedor, eventos canônicos, CandleEngine, Replay/CSV providers, qualidade de dados, supervisão de conexão, WS | `LIVE_DATA_TEST_PLAN.md` | A, B, D, E implementadas e testadas com eventos sintéticos; F parcial (falta teste prolongado com feed real e métricas exportadas para monitoramento externo) |
 | L — Live Data (C) | CedroProvider real | Documentação oficial + contrato + credenciais + **teste real de conexão** | **Bloqueada** (ver `PROVIDER_INTEGRATION.md`) |
 | 2 — Biblioteca Brooks + RAG | Spike/canal, canais largos/estreitos, wedges, double top/bottom, MTR, falhas de rompimento; importação de material com licença registrada; consulta com citação verificável | Cada padrão com testes de reconhecimento e caso negativo; RAG nunca retorna trecho sem referência | Não iniciada (catálogo estático pronto) |
 | 3 — Probabilidades calibradas | Regressão logística, calibração (Platt/isotônica), curvas de calibração, controle de múltiplos testes, degradação | Brier fora da amostra melhor que a taxa-base; relatório de sensibilidade | Parcial (Wilson, bootstrap, Brier vs taxa-base, Bonferroni) |
@@ -29,5 +29,7 @@ Regra geral: **uma fase só avança quando seus critérios de aceitação estão
 - [x] Explicações determinísticas
 - [x] Replay sem informação futura
 - [x] API + Dashboard
+- [ ] Importação de backtests externos (CSV/XLSX/JSON, §11) — não iniciada
+- [ ] Validação do `docker compose` (não foi possível no ambiente de desenvolvimento)
 - [ ] **Validação com dados reais de WIN/WDO** — depende do usuário fornecer histórico licenciado
 - [ ] Conferência das especificações/feriados/horários com documentos oficiais da B3 (`validated: false` hoje)

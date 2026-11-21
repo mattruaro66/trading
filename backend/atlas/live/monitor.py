@@ -70,7 +70,8 @@ class LiveMonitor:
         self.repo = repo
         self.heartbeat_timeout = heartbeat_timeout
         self.reconnect_policy = reconnect or ReconnectPolicy()
-        self._clock = clock or (lambda: datetime.now(TZ))
+        user_clock = clock or (lambda: datetime.now(TZ))
+        self._clock = lambda: user_clock() or datetime.now(TZ)  # relógio simulado pode ainda não ter hora
         self._sleep = sleep or asyncio.sleep
         self.engine = CandleEngine(self.symbol, contract, source=f"{provider.name}{':SIMULATED' if provider.simulated else ''}")
         self.pipeline = AnalysisPipeline(self.symbol, params)
@@ -254,7 +255,7 @@ class LiveMonitor:
                 and not self.engine.degraded):
             self._awaiting_clean_candle = False
             self.alerts.set_data_status(True)
-        msg: dict = {"type": ev.kind, "bar": bar_dict(bar)}
+        msg: dict = {"type": ev.kind, "bar": bar_dict(bar), "status": self.status()}
         if self.pipeline.last_ts is None or bar.ts_open > self.pipeline.last_ts:
             out = self.pipeline.on_bar_closed(bar)
             alert_events = self.alerts.process(out)

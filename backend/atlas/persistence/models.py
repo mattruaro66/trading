@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 
 class ContractRow(Base):
     __tablename__ = "contracts"
-    code: Mapped[str] = mapped_column(String(12), primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
     symbol: Mapped[str] = mapped_column(String(8), index=True)
     expiry_date: Mapped[str] = mapped_column(String(10))
     last_trading_day: Mapped[str] = mapped_column(String(10))
@@ -26,7 +26,7 @@ class DataImportRow(Base):
     __tablename__ = "data_imports"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(8), index=True)
-    contract: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    contract: Mapped[str | None] = mapped_column(String(32), nullable=True)
     filename: Mapped[str] = mapped_column(String(255))
     file_sha256: Mapped[str] = mapped_column(String(64), index=True)
     format: Mapped[str] = mapped_column(String(32))
@@ -40,7 +40,7 @@ class CandleRow(Base):
     __table_args__ = (UniqueConstraint("symbol", "contract", "ts_open", name="uq_candle"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(8), index=True)
-    contract: Mapped[str] = mapped_column(String(12), index=True)  # "continuous" para séries contínuas
+    contract: Mapped[str] = mapped_column(String(32), index=True)  # "continuous" para séries contínuas
     series_kind: Mapped[str] = mapped_column(String(16), default="contract")
     ts_open: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     open: Mapped[float] = mapped_column(Float)
@@ -49,8 +49,8 @@ class CandleRow(Base):
     close: Mapped[float] = mapped_column(Float)
     volume: Mapped[float | None] = mapped_column(Float, nullable=True)
     trades: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(String(12), default="closed")
-    quality: Mapped[str] = mapped_column(String(12), default="ok")
+    status: Mapped[str] = mapped_column(String(32), default="closed")
+    quality: Mapped[str] = mapped_column(String(32), default="ok")
     quality_flags: Mapped[str] = mapped_column(String(255), default="")
     source: Mapped[str] = mapped_column(String(255))
     synthetic: Mapped[bool] = mapped_column(Boolean, default=False)

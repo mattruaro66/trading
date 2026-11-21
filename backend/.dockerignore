@@ -1,0 +1,5 @@
+__pycache__
+*.pyc
+data/atlas.db
+data/store
+.pytest_cache

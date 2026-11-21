@@ -72,7 +72,8 @@ class ReplayProvider(MarketDataProvider):
     def clock(self) -> datetime | None:
         """Relógio simulado: horário do último evento emitido; desconectado, o horário do próximo evento
         (ponto em que o fluxo será retomado)."""
-        if self._state is not ConnectionState.CONNECTED and self._pos < len(self._all):
+        streaming = self._task is not None and not self._task.done()
+        if not streaming and self._failed_once and self._pos < len(self._all):
             return self._all[self._pos].exchange_timestamp
         return self._clock
 
