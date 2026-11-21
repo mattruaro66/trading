@@ -10,10 +10,23 @@ interface Step {
   marks: { label: string; side: string }[];
   evaluations: { side: string; setup: string; stage: string; passed: boolean; criteria: any[] }[];
   signals: { side: string; setup: string; entry: number; stop: number; target: number }[];
-  exec_events: { kind: string; ts: string; reason: string | null; trade: any }[];
+  exec_events: { kind: string; ts: string; reason: string | null; trade: any; orders: SimOrder[] }[];
+  position: Position;
   alert_events: { alert_id: string; state: string; state_label: string; reason: string }[];
   data_ok: boolean;
 }
+
+interface SimOrder {
+  order_id: number; group: number; role: string; role_pt: string; action: string; action_pt: string; type_pt: string;
+  qty: number; price: number | null; status: string; status_pt: string; created_ts: string; done_ts: string | null;
+  fill_price: number | null; note: string; setup: string;
+}
+interface Position {
+  state: string; realized_brl: number; closed_trades: number; qty?: number; entry_price?: number; stop_price?: number;
+  target_price?: number; mark_price?: number; unrealized_points?: number; unrealized_brl?: number; bars_held?: number; setup?: string;
+}
+
+const STATE_PT: Record<string, string> = { flat: "Zerado", pending_entry: "Ordem de entrada pendente", long: "Comprado", short: "Vendido" };
 
 const REGIME_PT: Record<string, string> = {
   BULL_TREND: "Tendência de alta", BEAR_TREND: "Tendência de baixa", TRADING_RANGE: "Trading range",
@@ -32,6 +45,7 @@ export default function Replay() {
   const [log, setLog] = useState<string[]>([]);
   const [alerts, setAlerts] = useState<AlertDTO[]>([]);
   const [trades, setTrades] = useState<any[]>([]);
+  const [orders, setOrders] = useState<SimOrder[]>([]);
   const [selected, setSelected] = useState<AlertDTO | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(4);
@@ -54,6 +68,7 @@ export default function Replay() {
       setLog([]);
       setAlerts([]);
       setTrades([]);
+      setOrders([]);
       setSelected(null);
     } catch (e: any) {
       setError(e.message);
@@ -94,6 +109,12 @@ export default function Replay() {
         }
         for (const a of s.alert_events) newLog.push(`${s.bar.ts_open.slice(11, 16)} [${a.state_label}] ${a.reason}`);
       }
+      const upd = r.steps.flatMap((s) => s.exec_events.flatMap((e) => e.orders ?? []));
+      if (upd.length) setOrders((prev) => {
+        const m = new Map(prev.map((o) => [o.order_id, o]));
+        upd.forEach((o) => m.set(o.order_id, o));
+        return [...m.values()].sort((a, b) => b.order_id - a.order_id).slice(0, 300);
+      });
       setBars((b) => [...b, ...r.steps.map((s) => s.bar)]);
       setMarkers((m) => [...m, ...newMarks]);
       setLast(r.steps[r.steps.length - 1]);
@@ -219,6 +240,41 @@ export default function Replay() {
                 </tr>
               ))}
             </tbody></table>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-3">
+        <div className="card text-sm space-y-2">
+          <div className="font-semibold">Posição simulada</div>
+          {last?.position ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="Situação" value={STATE_PT[last.position.state] ?? last.position.state} />
+              <Stat label="Resultado realizado" value={`R$ ${fmt(last.position.realized_brl)}`} hint={`${last.position.closed_trades} operações`} />
+              {last.position.entry_price !== undefined && <>
+                <Stat label="Entrada" value={fmt(last.position.entry_price)} hint={`${last.position.qty} contrato(s) · ${last.position.setup}`} />
+                <Stat label="Último preço" value={fmt(last.position.mark_price)} />
+                <Stat label="Stop / alvo" value={`${fmt(last.position.stop_price)} / ${fmt(last.position.target_price)}`} />
+                <Stat label="Resultado aberto" value={`R$ ${fmt(last.position.unrealized_brl)}`} hint={`${fmt(last.position.unrealized_points)} pts · ${last.position.bars_held} candles`} />
+              </>}
+            </div>
+          ) : <div className="text-slate-500">—</div>}
+          <div className="text-xs text-amber-300">Execução simulada pelo método da Estratégia A. Nenhuma ordem é enviada a corretora ou bolsa.</div>
+        </div>
+        <div className="card xl:col-span-3">
+          <div className="font-semibold mb-1">Livro de ordens simulado</div>
+          <div className="text-xs text-slate-400 mb-1">Entrada stop válida por 1 candle → ao executar, stop e alvo entram como OCO → a execução de um cancela o outro; saídas por tempo/sessão são a mercado.</div>
+          <div className="max-h-64 overflow-auto">
+            <table className="tbl">
+              <thead><tr><th>#</th><th>Grupo</th><th>Criada</th><th>Função</th><th>Lado</th><th>Tipo</th><th>Preço</th><th>Situação</th><th>Execução</th><th>Obs.</th></tr></thead>
+              <tbody>{orders.map((o) => (
+                <tr key={o.order_id}>
+                  <td>{o.order_id}</td><td>{o.group} {o.setup}</td><td>{o.created_ts.slice(5, 16).replace("T", " ")}</td>
+                  <td>{o.role_pt}</td><td className={o.action === "buy" ? "text-green-400" : "text-red-400"}>{o.action_pt} {o.qty}</td>
+                  <td>{o.type_pt}</td><td>{o.price === null ? "—" : fmt(o.price)}</td>
+                  <td className={o.status === "filled" ? "text-sky-300" : o.status === "working" ? "text-yellow-300" : "text-slate-500"}>{o.status_pt}</td>
+                  <td>{o.fill_price === null ? "" : `${fmt(o.fill_price)} · ${o.done_ts?.slice(11, 16)}`}</td><td className="text-xs text-slate-400">{o.note}</td>
+                </tr>))}</tbody>
+            </table>
           </div>
         </div>
       </div>

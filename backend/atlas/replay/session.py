@@ -56,6 +56,7 @@ class ReplaySession:
         d = output_dict(out)
         d["alert_events"] = [e.as_dict() for e in events]
         d["index"] = self.cursor - 1
+        d["position"] = self.pipeline.sim.position(bar)
         for e in events:
             self.log.append({"ts": e.ts.isoformat(), "state": e.state.value, "reason": e.reason, "alert_id": e.alert_id})
         return d
@@ -77,4 +78,6 @@ class ReplaySession:
                 "current_ts": self.bars[self.cursor - 1].ts_open.isoformat() if self.cursor else None,
                 "synthetic": any(b.synthetic for b in self.bars),
                 "closed_trades": [t.as_dict() for t in self.pipeline.sim.closed],
+                "orders": [o.as_dict() for o in self.pipeline.sim.orders],
+                "position": self.pipeline.sim.position(),
                 "alerts": [a.as_dict() for a in self.alerts.list("confirmed_setup")]}

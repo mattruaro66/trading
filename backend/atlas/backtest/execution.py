@@ -68,6 +68,45 @@ class Trade:
         }
 
 
+ROLE_PT = {"entry": "entrada", "stop_loss": "stop", "take_profit": "alvo", "market_exit": "saída a mercado"}
+STATUS_PT = {"working": "pendente", "filled": "executada", "cancelled": "cancelada", "expired": "expirada"}
+TYPE_PT = {"stop": "stop", "limit": "limitada", "market": "a mercado"}
+EXIT_REASON_PT = {"stop": "stop", "stop_gap": "stop (gap)", "target": "alvo", "target_gap": "alvo (gap)",
+                  "time_exit": "tempo", "session_end": "fim da sessão", "data_gap_exit": "lacuna de dados"}
+
+
+@dataclass
+class SimOrder:
+    """Ordem SIMULADA. Nunca é enviada a corretora/bolsa: existe apenas dentro do simulador.
+
+    Fluxo do método (Estratégia A): ordem stop de entrada válida por 1 candle → ao executar, stop e alvo
+    entram como par OCO → a execução de uma perna cancela a outra; saídas por tempo, sessão ou lacuna
+    são ordens a mercado que cancelam o par OCO.
+    """
+
+    order_id: int
+    trade_group: int  # agrupa as ordens de uma mesma configuração
+    role: str  # entry | stop_loss | take_profit | market_exit
+    action: str  # buy | sell
+    type: str  # stop | limit | market
+    qty: int
+    price: float | None
+    created_ts: datetime
+    status: str = "working"  # working | filled | cancelled | expired
+    done_ts: datetime | None = None
+    fill_price: float | None = None
+    note: str = ""
+    setup: str = ""
+
+    def as_dict(self) -> dict:
+        return {"order_id": self.order_id, "group": self.trade_group, "role": self.role, "role_pt": ROLE_PT[self.role],
+                "action": self.action, "action_pt": "compra" if self.action == "buy" else "venda", "type": self.type,
+                "type_pt": TYPE_PT[self.type], "qty": self.qty, "price": self.price, "status": self.status,
+                "status_pt": STATUS_PT[self.status], "created_ts": self.created_ts.isoformat(),
+                "done_ts": self.done_ts.isoformat() if self.done_ts else None, "fill_price": self.fill_price,
+                "note": self.note, "setup": self.setup, "simulated": True}
+
+
 @dataclass(frozen=True)
 class ExecEvent:
     kind: str  # order_placed | order_expired | order_cancelled | filled | closed | signal_skipped
@@ -75,6 +114,7 @@ class ExecEvent:
     signal: Signal
     trade: Trade | None = None
     reason: str | None = None
+    orders: tuple = ()  # snapshots (dict) das ordens simuladas alteradas neste evento
 
 
 @dataclass
@@ -98,13 +138,61 @@ class TradeSimulator:
         self.closed: list[Trade] = []
         self.prev_bar: Bar | None = None
         self._ids = itertools.count(1)
+        self._order_ids = itertools.count(1)
+        self._groups = itertools.count(1)
+        self.orders: list[SimOrder] = []
+        self._working: dict[str, SimOrder] = {}  # role → ordem pendente do grupo atual
+        self._group: int | None = None
+        self.realized_brl = 0.0
+
+    # ---------------- livro de ordens simulado ----------------
+    def _new_order(self, role: str, action: str, otype: str, price: float | None, ts: datetime, setup: str,
+                   note: str = "") -> SimOrder:
+        o = SimOrder(next(self._order_ids), self._group or 0, role, action, otype, self.costs.contracts, price, ts,
+                     note=note, setup=setup)
+        self.orders.append(o)
+        if o.status == "working":
+            self._working[role] = o
+        return o
+
+    def _finish(self, role: str, status: str, ts: datetime, fill: float | None = None, note: str = "") -> SimOrder | None:
+        o = self._working.pop(role, None)
+        if o is None:
+            return None
+        o.status, o.done_ts, o.fill_price = status, ts, fill
+        if note:
+            o.note = note
+        return o
+
+    @staticmethod
+    def _snap(*orders) -> tuple:
+        return tuple(o.as_dict() for o in orders if o is not None)
+
+    def position(self, last: Bar | None = None) -> dict:
+        """Situação atual da conta simulada (sem ordens reais)."""
+        bar = last or self.prev_bar
+        base = {"realized_brl": round(self.realized_brl, 2), "closed_trades": len(self.closed),
+                "working_orders": [o.as_dict() for o in self._working.values()]}
+        t = self.open_trade
+        if t is None:
+            return {**base, "state": "pending_entry" if self.pending else "flat"}
+        mark = bar.close if bar else t.entry_price
+        pts = round((mark - t.entry_price) * t.side.sign, 10)
+        return {**base, "state": "long" if t.side is Side.LONG else "short", "qty": self.costs.contracts,
+                "entry_price": t.entry_price, "stop_price": t.stop_price, "target_price": t.target_price,
+                "mark_price": mark, "unrealized_points": pts, "unrealized_brl": self.spec.pnl_brl(pts, self.costs.contracts),
+                "bars_held": t.bars_held, "setup": t.signal.setup_label}
 
     # ------------------------------------------------------------------
     def submit(self, signal: Signal, signal_bar: Bar) -> ExecEvent:
         if self.open_trade is not None or self.pending is not None:
             return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="position_or_order_active")
         self.pending = _Pending(signal, signal_bar)
-        return ExecEvent("order_placed", signal_bar.ts_close, signal)
+        self._group = next(self._groups)
+        action = "buy" if signal.side is Side.LONG else "sell"
+        o = self._new_order("entry", action, "stop", signal.entry_price, signal_bar.ts_close, signal.setup_label,
+                            "válida somente no próximo candle de 5 min")
+        return ExecEvent("order_placed", signal_bar.ts_close, signal, orders=self._snap(o))
 
     def _slip(self, ticks: float) -> float:
         return self.spec.ticks(ticks)
@@ -126,14 +214,18 @@ class TradeSimulator:
         if self.open_trade is not None and not contiguous:
             t = self.open_trade
             px = prev.close - t.side.sign * self._slip(self.costs.exit_slippage_ticks)
+            px = self.spec.round_to_tick(px, "down" if t.side is Side.LONG else "up")
             self._close(t, prev.ts_close, px, "data_gap_exit")
-            events.append(ExecEvent("closed", prev.ts_close, t.signal, t, "data_gap_exit"))
+            events.append(ExecEvent("closed", prev.ts_close, t.signal, t, "data_gap_exit",
+                                    orders=self._exit_orders(t, prev.ts_close, "data_gap_exit")))
 
         if self.pending is not None:
             pend = self.pending
             self.pending = None
             if not contiguous or pend.placed_after is not prev:
-                events.append(ExecEvent("order_cancelled", bar.ts_open, pend.signal, reason="next_bar_not_contiguous"))
+                o = self._finish("entry", "cancelled", bar.ts_open, note="candle seguinte ausente/não contíguo")
+                events.append(ExecEvent("order_cancelled", bar.ts_open, pend.signal, reason="next_bar_not_contiguous",
+                                        orders=self._snap(o)))
             else:
                 ev = self._try_fill(pend.signal, bar)
                 events.extend(ev)
@@ -154,20 +246,45 @@ class TradeSimulator:
             elif bar.high >= s.entry_price:
                 fill = s.entry_price + slip_in
             else:
-                return [ExecEvent("order_expired", bar.ts_close, s, reason="not_triggered")]
+                return self._expire(s, bar)
         else:
             if bar.open <= s.entry_price:
                 fill, gap = bar.open - slip_in, True
             elif bar.low <= s.entry_price:
                 fill = s.entry_price - slip_in
             else:
-                return [ExecEvent("order_expired", bar.ts_close, s, reason="not_triggered")]
+                return self._expire(s, bar)
         fill = self.spec.round_to_tick(fill, "up" if sign > 0 else "down")
         t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, s.stop_price, s.target_price, entry_gap=gap)
         self.open_trade = t
-        events = [ExecEvent("filled", bar.ts_open, s, t)]
+        entry = self._finish("entry", "filled", bar.ts_open, fill, "gap de abertura" if gap else "")
+        exit_action = "sell" if s.side is Side.LONG else "buy"
+        sl = self._new_order("stop_loss", exit_action, "stop", s.stop_price, bar.ts_open, s.setup_label, "OCO com o alvo")
+        tp = self._new_order("take_profit", exit_action, "limit", s.target_price, bar.ts_open, s.setup_label, "OCO com o stop")
+        events = [ExecEvent("filled", bar.ts_open, s, t, orders=self._snap(entry, sl, tp))]
         events.extend(self._manage(t, bar, entry_bar=True))
         return events
+
+    def _expire(self, s: Signal, bar: Bar) -> list[ExecEvent]:
+        o = self._finish("entry", "expired", bar.ts_close, note="preço não atingido no candle seguinte")
+        return [ExecEvent("order_expired", bar.ts_close, s, reason="not_triggered", orders=self._snap(o))]
+
+    def _exit_orders(self, t: Trade, ts: datetime, reason: str) -> tuple:
+        if reason in ("stop", "stop_gap"):
+            a = self._finish("stop_loss", "filled", ts, t.exit_price, "gap além do stop" if reason == "stop_gap" else "")
+            b = self._finish("take_profit", "cancelled", ts, note="OCO: stop executado")
+            return self._snap(a, b)
+        if reason in ("target", "target_gap"):
+            a = self._finish("take_profit", "filled", ts, t.exit_price, "gap além do alvo" if reason == "target_gap" else "")
+            b = self._finish("stop_loss", "cancelled", ts, note="OCO: alvo executado")
+            return self._snap(a, b)
+        why = EXIT_REASON_PT.get(reason, reason)
+        a = self._finish("stop_loss", "cancelled", ts, note=f"saída por {why}")
+        b = self._finish("take_profit", "cancelled", ts, note=f"saída por {why}")
+        action = "sell" if t.side is Side.LONG else "buy"
+        m = self._new_order("market_exit", action, "market", None, ts, t.signal.setup_label, f"saída por {why}")
+        self._finish("market_exit", "filled", ts, t.exit_price)
+        return self._snap(a, b, m)
 
     def _manage(self, t: Trade, bar: Bar, entry_bar: bool) -> list[ExecEvent]:
         sign = t.side.sign
@@ -204,7 +321,7 @@ class TradeSimulator:
             return []
         exit_px = self.spec.round_to_tick(exit_px, "down" if sign > 0 else "up")
         self._close(t, bar.ts_close, exit_px, reason)
-        return [ExecEvent("closed", bar.ts_close, t.signal, t, reason)]
+        return [ExecEvent("closed", bar.ts_close, t.signal, t, reason, orders=self._exit_orders(t, bar.ts_close, reason))]
 
     def _close(self, t: Trade, ts: datetime, px: float, reason: str) -> None:
         t.exit_ts, t.exit_price, t.exit_reason = ts, px, reason
@@ -218,3 +335,4 @@ class TradeSimulator:
         t.net_r = round(t.net_brl / risk_brl, 4) if risk_brl else None
         self.closed.append(t)
         self.open_trade = None
+        self.realized_brl += t.net_brl

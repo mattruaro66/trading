@@ -34,7 +34,8 @@ def output_dict(out: PipelineOutput) -> dict:
         "signals": [{"side": x.side.value, "setup": x.setup_label, "entry": x.entry_price, "stop": x.stop_price,
                      "target": x.target_price} for x in out.signals],
         "exec_events": [{"kind": e.kind, "ts": e.ts.isoformat(), "reason": e.reason,
-                         "trade": e.trade.as_dict() if e.trade else None} for e in out.exec_events],
+                         "trade": e.trade.as_dict() if e.trade else None, "orders": list(e.orders)}
+                        for e in out.exec_events],
     }
 
 

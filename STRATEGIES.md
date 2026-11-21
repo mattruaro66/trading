@@ -159,6 +159,13 @@ Sem dados intrabar:
 4. Gap de abertura além do alvo → saída **no alvo** (não na abertura mais favorável).
 5. Stops, saídas por tempo e por sessão sofrem `exit_slippage_ticks` (1); alvos (ordens limitadas) não.
 
+### Livro de ordens simulado
+Backtest, replay e live usam o mesmo `TradeSimulator`, que registra as ordens do método como ordens **simuladas** (`SimOrder`, nunca enviadas a corretora/bolsa):
+1. Fechamento da barra de sinal → ordem **stop** de entrada (compra acima / venda abaixo), válida só no candle seguinte; senão **expira**.
+2. Entrada executada → **stop** (ordem stop) e **alvo** (ordem limitada) entram como par **OCO**.
+3. Execução de uma perna cancela a outra. Saída por tempo, fim de sessão ou lacuna de dados → ordem **a mercado** que cancela o par OCO.
+4. Uma posição por vez: sinais com posição/ordem ativa são registrados como ignorados.
+
 ### Invalidação
 - Ordem não acionada em *t+1*.
 - Pullback reiniciado (nova máxima acima do swing, `max_count`, `max_pullback_bars`).
