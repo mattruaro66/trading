@@ -60,6 +60,8 @@ class Trade:
             "profile": s.profile, "signal_ts": s.signal_ts.isoformat(), "entry_ts": self.entry_ts.isoformat(),
             "entry_price": self.entry_price, "stop_price": self.stop_price, "target_price": self.target_price,
             "risk_points": s.risk_points, "entry_gap": self.entry_gap,
+            "initial_stop": (round(self.entry_price - self.side.sign * self.initial_risk, 10) if self.initial_risk
+                             else s.stop_price),
             "exit_ts": self.exit_ts.isoformat() if self.exit_ts else None, "exit_price": self.exit_price,
             "exit_reason": self.exit_reason, "bars_held": self.bars_held, "mfe_points": self.mfe_points,
             "mae_points": self.mae_points, "ambiguous_bar": self.ambiguous_bar, "points": self.points,

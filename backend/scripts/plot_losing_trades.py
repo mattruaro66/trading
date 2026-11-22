@@ -46,7 +46,27 @@ def pick_examples(files):
     return chosen, {s: len(v) for s, v in by_setup.items()}
 
 
-def plot(key, lots, usd, bars, idx, out: Path, n_losers: int):
+def pick_critical(files, quota: dict[str, int]):
+    """Perdas cheias (≤ −0,85R) dos setups indicados; por setup, as piores primeiro, espalhadas no tempo."""
+    sigs = collections.defaultdict(list)
+    for f in files:
+        d = json.loads(Path(f).read_text())
+        sym = Path(f).stem.split("_")[-1]
+        for t in d["trades"]:
+            sigs[(sym, t["entry_ts"], t["setup"], t["side"])].append(t)
+    counts = collections.Counter(k[2] for k, l in sigs.items() if sum(t["net_brl"] for t in l) < 0)
+    out = []
+    for setup, n in quota.items():
+        cands = sorted(((k, l, sum(t["net_brl"] for t in l)) for k, l in sigs.items() if k[2] == setup),
+                       key=lambda c: c[2])
+        cands = [c for c in cands if c[2] / 40 <= -0.85]
+        cands.sort(key=lambda c: c[0][1])  # ordem cronológica
+        step = max(1, len(cands) // max(n, 1))
+        out += [(c, counts[setup]) for c in cands[::step][:n]]
+    return out
+
+
+def plot(key, lots, usd, bars, idx, out: Path, n_losers: int, tag: str = ""):
     sym, ets, setup, side = key
     j = idx[ets]
     i = j - 1
@@ -76,7 +96,11 @@ def plot(key, lots, usd, bars, idx, out: Path, n_losers: int):
     t0 = lots[0]
     xe = len(win) - 1
     ax.hlines(t0["entry_price"], si, xe, colors="#1565c0", linestyles="-", lw=1.1, label=f"entrada {t0['entry_price']}")
-    ax.hlines(t0["stop_price"], si, xe, colors="#c62828", linestyles="--", lw=1.1, label=f"stop {t0['stop_price']}")
+    init = t0.get("initial_stop", t0["stop_price"])
+    ax.hlines(init, si, xe, colors="#c62828", linestyles="--", lw=1.1, label=f"stop inicial {init}")
+    moved = sorted({t["stop_price"] for t in lots if t["stop_price"] != init})
+    for mv in moved:
+        ax.hlines(mv, si, xe, colors="#ef6c00", linestyles="-.", lw=1.1, label=f"stop movido {mv}")
     for t in lots:
         ax.hlines(t["target_price"], si, xe, colors="#2e7d32", linestyles=":", lw=1.1,
                   label=f"alvo {t['lot']} {t['target_price']}")
@@ -101,7 +125,7 @@ def plot(key, lots, usd, bars, idx, out: Path, n_losers: int):
     ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
     ax.grid(alpha=0.2)
     fig.subplots_adjust(bottom=0.24, left=0.07, right=0.98, top=0.93)
-    fn = out / f"{int(setup[1:]):02d}_{setup}_{sym}.png"
+    fn = out / f"{tag}{int(setup[1:]):02d}_{setup}_{sym}_{bars[j].ts_open:%Y%m%d%H%M}.png"
     fig.savefig(fn)
     plt.close(fig)
     return fn
@@ -118,11 +142,26 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="+")
     ap.add_argument("--out", default="reports/losers")
+    ap.add_argument("--critical", default=None, help="quotas por setup, ex.: S18:2,S13:3 (perdas cheias)")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    chosen, counts = pick_examples(a.files)
     cache = {}
+
+    def series(sym):
+        if sym not in cache:
+            bs = sorted(import_bars(str(RAW / f"{sym}_M5.csv"), sym, sym, server_offsets=OFFS.get(sym)).bars,
+                        key=lambda b: b.ts_open)
+            cache[sym] = (bs, {b.ts_open.isoformat(): k for k, b in enumerate(bs)})
+        return cache[sym]
+
+    if a.critical:
+        quota = {k: int(v) for k, v in (x.split(":") for x in a.critical.split(","))}
+        for n, ((key, lots, usd), cnt) in enumerate(pick_critical(a.files, quota), 1):
+            bs, idx = series(key[0])
+            print(plot(key, sorted(lots, key=lambda t: t["lot"]), usd, bs, idx, out, cnt, tag=f"{n:02d}_"))
+        return
+    chosen, counts = pick_examples(a.files)
     for setup in sorted(chosen, key=lambda s: int(s[1:])):
         key, lots, usd = chosen[setup]
         sym = key[0]
