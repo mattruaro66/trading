@@ -29,6 +29,15 @@
       "close": "17:00",
       "tz": "Europe/London",
       "calendar": "fx"
+    },
+    {
+      "symbol": "USDBRL",
+      "effective_from": "2000-01-01",
+      "open": "09:00",
+      "close": "18:30",
+      "tz": "America/Sao_Paulo",
+      "calendar": "fx",
+      "note": "horário do WDO na B3"
     }
   ]
 }

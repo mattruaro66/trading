@@ -13,8 +13,8 @@ from atlas.contracts.calendar import TradingCalendar, load_calendar
 from atlas.contracts.specs import get_spec
 from atlas.core.types import Bar, Symbol
 
-_BASE = {Symbol.WIN: 120000.0, Symbol.WDO: 5500.0, Symbol.EURUSD: 1.08, Symbol.USDJPY: 150.0}
-_VOL = {Symbol.WIN: 0.0012, Symbol.WDO: 0.0007, Symbol.EURUSD: 0.0004, Symbol.USDJPY: 0.0005}  # desvio por candle (fração do preço), arbitrário
+_BASE = {Symbol.WIN: 120000.0, Symbol.WDO: 5500.0, Symbol.EURUSD: 1.08, Symbol.USDJPY: 150.0, Symbol.USDBRL: 5.50}
+_VOL = {Symbol.WIN: 0.0012, Symbol.WDO: 0.0007, Symbol.EURUSD: 0.0004, Symbol.USDJPY: 0.0005, Symbol.USDBRL: 0.0006}  # desvio por candle (fração do preço), arbitrário
 
 
 def generate_bars(symbol: Symbol | str, contract: str, start: date, sessions: int, seed: int = 7,

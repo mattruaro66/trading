@@ -83,3 +83,11 @@ def test_fx_backtests_respect_loss_limit():
         for t in r["trades"]:
             if t["exit_reason"] != "stop_gap":
                 assert t["net_brl"] >= -limit - 1e-6
+
+
+def test_usdbrl_as_wdo_proxy():
+    s = get_spec("USDBRL")
+    assert s.kind == "fx" and s.quote_currency == "BRL" and s.account_currency == "USD"
+    assert s.pnl_money(0.0100, 1.0, 5.5) == pytest.approx(181.82)  # 100 pips de real convertidos a 5,50
+    w = load_calendar().session("USDBRL", date(2026, 2, 16))  # carnaval: forex abre; horário do WDO
+    assert (w.open.hour, w.close.hour, w.close.minute) == (9, 18, 30) and len(w.bucket_opens()) == 114

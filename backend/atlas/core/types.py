@@ -20,10 +20,11 @@ class Symbol(StrEnum):
     WDO = "WDO"
     EURUSD = "EURUSD"  # forex: usado para validar o método em dados reais (sessão Londres/NY)
     USDJPY = "USDJPY"
+    USDBRL = "USDBRL"  # dólar/real à vista (forex): substituto do WDO para validar o método
 
     @property
     def is_fx(self) -> bool:
-        return self.value in ("EURUSD", "USDJPY")
+        return self.value in ("EURUSD", "USDJPY", "USDBRL")
 
 
 class SeriesKind(StrEnum):

@@ -109,6 +109,24 @@
       "lot_step": 0.01,
       "min_lot": 0.01,
       "source": "Convenção de mercado (1 lote = 100.000 da moeda base); conferir com a especificação do símbolo na corretora"
+    },
+    {
+      "symbol": "USDBRL",
+      "name": "Dólar / Real (forex via MetaTrader 5) — substituto do WDO",
+      "version": "1",
+      "effective_from": "2000-01-01",
+      "tick_size": 1e-05,
+      "point_value_brl": 100000,
+      "price_decimals": 5,
+      "expiry_month_codes": [],
+      "expiry_rule": "none",
+      "kind": "fx",
+      "contract_size": 100000,
+      "quote_currency": "BRL",
+      "account_currency": "USD",
+      "lot_step": 0.01,
+      "min_lot": 0.01,
+      "source": "Convenção de mercado (1 lote = 100.000 USD); conferir dígitos e contrato do símbolo na corretora"
     }
   ]
 }

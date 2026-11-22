@@ -72,6 +72,10 @@ def main() -> int:
 
     for nome in sorted(nomes):
         mt5.symbol_select(nome, True)
+        si = mt5.symbol_info(nome)
+        if si is not None:
+            print(f"  {nome}: dígitos={si.digits} ponto={si.point} contrato={si.trade_contract_size} "
+                  f"lote mín.={si.volume_min} passo={si.volume_step} moeda lucro={si.currency_profit}")
         partes, t = [], inicio
         while t < fim:  # em janelas de 30 dias para não estourar o limite de barras do terminal
             t2 = min(t + timedelta(days=30), fim)
