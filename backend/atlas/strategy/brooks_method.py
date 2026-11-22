@@ -47,7 +47,7 @@ from atlas.price_action.regime import Regime
 from atlas.strategy.base import Criterion, SetupEvaluation, Signal, StrategySpec, params_hash
 
 STRATEGY_ID = "brooks_method"
-STRATEGY_VERSION = "1.1.0"
+STRATEGY_VERSION = "1.2.0"
 
 SETUP_NAMES = {
     "S1": "H2/L2 tendência", "S2": "H1/L1 tendência forte", "S3": "H3/L3 cunha", "S4": "H4/L4",
@@ -81,6 +81,12 @@ class BrooksMethodParams(BaseModel):
     flatten_minutes_before_close: int = Field(5, ge=0, le=60)
     enabled_setups: list[str] | None = None  # None = todos
     time_exit_bars: int = 0
+    user_rules: bool = Field(True, description="v1.2: regras da revisão do usuário (U1–U6)")
+    lateral_slope_atr: float = Field(0.3, ge=0, description="U1: |EMA(t) − EMA(t−10)| abaixo disso (em ATR) …")
+    lateral_crosses: int = Field(3, ge=1, description="U1: … e pelo menos N cruzamentos do fechamento com a EMA em 20 barras")
+    min_room_r: float = Field(1.0, ge=0, description="U3: espaço mínimo até o próximo suporte/resistência, em R")
+    max_ema_dist_atr: float = Field(1.5, gt=0, description="U4: entrada a favor no máximo a N ATR da EMA")
+    no_entry_last_minutes: int = Field(60, ge=0, description="U5: sem entradas nos últimos N minutos da sessão")
     always_stop_entry: bool = Field(True, description="Entrada sempre por ordem stop na ativação (S17/S18 também); False = a mercado")
 
     @property
@@ -121,6 +127,9 @@ class BrooksMethodStrategy:
         self.mtr_watch = {1: None, -1: None}  # dir da reversão → (extremo, índice)
         self.session_bar = 0
         self.prev_session_last = None
+        self.day_hi = self.day_lo = None
+        self.prev_day = None  # (máxima, mínima) da sessão anterior
+        self._sess_cache = {}
 
     # ------------------------------------------------------------------ utilitários
     def _strong(self, snap, d: int) -> bool:
@@ -141,6 +150,9 @@ class BrooksMethodStrategy:
         if snap.reset_reason:
             self.reset()
         if snap.session_start:
+            if self.day_hi is not None:
+                self.prev_day = (self.day_hi, self.day_lo)
+            self.day_hi = self.day_lo = None
             self.prev_session_last = self.h[-1].bar if self.h else None
             self.session_bar = 0
             self.last_breakout = self.last_failed = None
@@ -148,6 +160,9 @@ class BrooksMethodStrategy:
         self.session_bar += 1
         self.i += 1
         bar, m, rg = snap.bar, snap.metrics, snap.regime
+        self._day_before = (self.day_hi, self.day_lo)  # extremos do dia ANTES desta barra
+        self.day_hi = bar.high if self.day_hi is None else max(self.day_hi, bar.high)
+        self.day_lo = bar.low if self.day_lo is None else min(self.day_lo, bar.low)
         prev = self.h[-1] if self.h else None
         # swings (fractal de 3 barras confirmado nesta barra, sem olhar adiante)
         if len(self.h) >= 2:
@@ -207,6 +222,46 @@ class BrooksMethodStrategy:
                 self.mtr_watch[-1] = (self.extreme, self.i)
             if td < 0 and bar.close > ema and self._strong(snap, 1):
                 self.mtr_watch[1] = (self.extreme, self.i)
+
+    # ------------------------------------------------------------------ regras da revisão do usuário (v1.2)
+    def _lateral_wide(self, snap) -> bool:
+        """U1: mercado lateral — EMA plana e preço cruzando a média repetidamente (inclui a barra atual)."""
+        hist = [x for x in list(self.h)[-19:]] + [snap]
+        emas = [x.regime.ema for x in hist]
+        atr = snap.metrics.atr
+        if len(hist) < 20 or any(e is None for e in emas) or not atr:
+            return False
+        slope = abs(emas[-1] - emas[-11]) / atr
+        side = [1 if x.bar.close > e else -1 for x, e in zip(hist, emas)]
+        crosses = sum(1 for a, b in zip(side, side[1:]) if a != b)
+        return slope < self.params.lateral_slope_atr and crosses >= self.params.lateral_crosses
+
+    def _room_r(self, entry: float, risk: float, d: int) -> float | None:
+        """U3: distância (em R) da entrada até o próximo nível contrário: swings, máx/mín do dia e do dia anterior."""
+        levels = [px for _, px in (self.swing_highs if d > 0 else self.swing_lows)]
+        hi, lo = self._day_before
+        levels += [x for x in ((hi,) if d > 0 else (lo,)) if x is not None]
+        if self.prev_day:
+            levels += list(self.prev_day)
+        ahead = [abs(x - entry) for x in levels if (x - entry) * d > 0]
+        return (min(ahead) / risk) if ahead and risk else None
+
+    def _minutes_to_close(self, bar) -> float | None:
+        from atlas.contracts.calendar import load_calendar
+        key = bar.ts_open.date()
+        if key not in self._sess_cache:
+            sess = load_calendar().session_for_ts(self.symbol, bar.ts_open)
+            self._sess_cache = {key: sess}
+        sess = self._sess_cache[key]
+        return None if sess is None else (sess.close - bar.ts_close).total_seconds() / 60
+
+    def _prior_reversal_leg(self, d: int) -> bool:
+        """U6: nas reversões, já houve uma 1ª perna na nova direção que rompeu a média com barra de força (20 barras)."""
+        for x in list(self.h)[-20:]:
+            e = x.regime.ema
+            if e is not None and x.metrics.atr and (x.bar.close - e) * d >= 0.3 * x.metrics.atr and self._strong(x, d):
+                return True
+        return False
 
     # ------------------------------------------------------------------ setups
     def _candidates(self, snap: PriceActionSnapshot) -> list[tuple[str, int, str, float | None]]:
@@ -338,6 +393,7 @@ class BrooksMethodStrategy:
     def on_snapshot(self, snap: PriceActionSnapshot, sim=None) -> list[SetupEvaluation]:
         self._update_state(snap)
         cands = self._candidates(snap) if snap.data_ok else []
+        lateral_wide = self.params.user_rules and self._lateral_wide(snap)
         self.h.append(snap)  # a partir daqui self.h[-1] é a barra atual
         p = self.params
         if p.enabled_setups is not None:
@@ -373,6 +429,27 @@ class BrooksMethodStrategy:
                 Criterion("B5", "Dados válidos", snap.data_ok, snap.data_ok, True),
                 Criterion(setup, SETUP_NAMES[setup], True, setup, setup),
             )
+            if p.user_rules:
+                ema = snap.regime.ema
+                reversal = setup in REVERSAL_SETUPS
+                room = self._room_r(entry, risk, d)
+                dist = abs(bar.close - ema) / m.atr if (ema is not None and m.atr) else None
+                mins = self._minutes_to_close(bar)
+                crit = crit + (
+                    Criterion("U1", "Fora de lateralidade (TTR): EMA plana com o preço cruzando a média", not (lateral_wide or tight
+                              or snap.regime.regime is Regime.TIGHT_TRADING_RANGE), lateral_wide, False),
+                    Criterion("U2", "Barra de sinal a favor (corpo e fechamento na direção da entrada)",
+                              self._good_signal(snap, d, strict=True), round(m.close_pos, 2), "a favor"),
+                    Criterion("U3", f"Espaço até o próximo suporte/resistência ≥ {p.min_room_r:g}R",
+                              room is None or room >= p.min_room_r, None if room is None else round(room, 2), p.min_room_r),
+                    Criterion("U4", f"A favor: perto da média (≤ {p.max_ema_dist_atr:g} ATR), não esticado",
+                              reversal or dist is None or dist <= p.max_ema_dist_atr,
+                              None if dist is None else round(dist, 2), p.max_ema_dist_atr),
+                    Criterion("U5", f"Fora dos últimos {p.no_entry_last_minutes} min da sessão",
+                              mins is None or mins > p.no_entry_last_minutes, None if mins is None else round(mins), p.no_entry_last_minutes),
+                    Criterion("U6", "Reversão só após 1ª perna que rompe a média com força",
+                              not reversal or self._prior_reversal_leg(d), reversal, True),
+                )
             passed = all(c.passed for c in crit) and d not in done
             signal = None
             if passed:

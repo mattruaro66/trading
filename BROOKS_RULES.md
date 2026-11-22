@@ -66,3 +66,17 @@ o que o Brooks descreve → como o ATLAS aplica → estado.
 **Gestão:** stop 1 tick além da barra de sinal; lote scalp 1R + lote swing 2R ou medida do movimento; stop do swing no zero a zero após o scalp; posição zerada no fim do pregão.
 
 **Fora das regras de execução**, por não serem setups: participantes (instituições, HFT), notícias, filosofia (não há regras fixas), tempo gráfico maior/menor (o projeto opera só em 5 min), tamanho de posição e conta.
+
+
+## Estratégia C v1.2 — regras da revisão do usuário (20 operações perdedoras comentadas)
+
+| Regra | Comentário do usuário que a originou | Tradução |
+|---|---|---|
+| U1 | "Operação em TTR é sempre erro" (S3, S4, S5, S6, S7, S11, S15) | Sem entradas com EMA plana (|ΔEMA 10 barras| < 0,3 ATR) e ≥ 3 cruzamentos do preço com a média em 20 barras, nem em tight trading range |
+| U2 | "Comprou acima de barra negativa — erro crasso" (S16, S19), "sinal fraco" (S4, S17) | Barra de sinal com corpo e fechamento a favor (fechamento ≥ 60% na direção) |
+| U3 | "Vendeu suporte", "venda baixo numa lateralidade", "comprando topo" (S3, S8, S9) | Espaço ≥ 1R até o próximo swing, máx/mín do dia ou do dia anterior |
+| U4 | "Sinal próximo à média", "L1 na média", "venda no fim do movimento (clímax)" (S2, S4, S12, S18) | Entradas a favor no máximo a 1,5 ATR da EMA |
+| U5 | "Fim do dia, baixo volume e amplitude" (S14, S19) | Sem entradas nos últimos 60 min da sessão |
+| U6 | "Esperaria o rompimento da média e uma primeira perna" (S10) | Reversões só depois de uma perna que fecha além da média com barra de força |
+
+`BrooksMethodParams(user_rules=False)` mantém a v1.1. Resultado e limitações: ver relatório da sessão; as 20 operações revisadas passam a ser bloqueadas, mas a expectativa do conjunto não melhorou (as regras cortam ganhadoras e perdedoras na mesma proporção).

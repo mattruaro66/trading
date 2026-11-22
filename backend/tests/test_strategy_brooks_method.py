@@ -17,7 +17,7 @@ from tests.helpers import make_signal
 @pytest.fixture(scope="module")
 def run40():
     bars = generate_bars("WIN", "WINK26", date(2026, 1, 5), 40, seed=33)
-    pipe = AnalysisPipeline("WIN", BrooksMethodParams())
+    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False))
     outs = [pipe.on_bar_closed(b) for b in bars]
     return bars, pipe, outs
 
@@ -50,7 +50,7 @@ def test_every_setup_has_a_name_and_reversal_set_is_known():
 def test_no_lookahead_truncation(run40):
     bars, _, outs = run40
     k = 2500
-    pipe = AnalysisPipeline("WIN", BrooksMethodParams())
+    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False))
     outs2 = [pipe.on_bar_closed(b) for b in bars[:k]]
     sig = lambda os: [(o.bar.ts_open, s.setup_label, s.side, s.entry_price, s.stop_price) for o in os for s in o.signals]
     assert sig(outs2) == sig(outs[:k])
@@ -99,7 +99,7 @@ def test_gap_reversal_setup():
     s2 = cal.session("WIN", cal.next_trading_day(day1[0].ts_open.date()))
     hi = day1[-1].high
     day2 = mk([(hi + 150, hi + 200, hi + 100, hi + 110), (hi + 110, hi + 120, hi - 50, hi - 30)], start=s2.open)
-    pipe = AnalysisPipeline("WIN", BrooksMethodParams())
+    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False))
     outs = [pipe.on_bar_closed(b) for b in day1 + day2]
     assert outs[-2].snapshot.session_start
     sig = [s for s in outs[-2].signals if s.setup_label == "S16"]
@@ -114,7 +114,7 @@ def test_trend_from_the_open_market_entry():
     day2 = mk([(last, last + 65, last - 5, last + 60), (last + 60, last + 125, last + 55, last + 120),
                (last + 120, last + 160, last + 115, last + 150)], start=s2.open)
     for always_stop, otype in ((False, "market"), (True, "stop")):
-        pipe = AnalysisPipeline("WIN", BrooksMethodParams(always_stop_entry=always_stop))
+        pipe = AnalysisPipeline("WIN", BrooksMethodParams(always_stop_entry=always_stop, user_rules=False))
         outs = [pipe.on_bar_closed(b) for b in day1 + day2]
         ev = [e for e in outs[-2].evaluations if e.setup_label == "S17"]
         assert ev  # tendência desde a abertura reconhecida no 2º candle do pregão
@@ -123,3 +123,25 @@ def test_trend_from_the_open_market_entry():
         if otype == "stop":  # ativação 1 tick acima da barra de sinal, stop 1 tick abaixo dela
             sb = sig.signal_bar
             assert sig.entry_price == sb.high + 5 and sig.stop_price == sb.low - 5
+
+
+
+# ----------------------------------------------------------------------- v1.2: regras da revisão do usuário
+def test_user_rules_no_lookahead_and_criteria_enforced():
+    bars = generate_bars("WIN", "WINK26", date(2026, 1, 5), 40, seed=33)
+    full = AnalysisPipeline("WIN", BrooksMethodParams())
+    outs = [full.on_bar_closed(b) for b in bars]
+    k = 2500
+    part = AnalysisPipeline("WIN", BrooksMethodParams())
+    outs2 = [part.on_bar_closed(b) for b in bars[:k]]
+    sig = lambda os: [(o.bar.ts_open, s.setup_label, s.side, s.entry_price, s.stop_price) for o in os for s in o.signals]
+    assert sig(outs2) == sig(outs[:k])
+    signals = [s for o in outs for s in o.signals]
+    assert signals, "as regras não devem eliminar todos os sinais"
+    for s in signals:
+        crit = {c.code: c for c in s.criteria}
+        assert all(crit[c].passed for c in ("U1", "U2", "U3", "U4", "U5", "U6"))
+        b = s.signal_bar
+        assert (b.close - b.open) * s.side.sign > 0  # nunca compra acima de barra negativa / vende abaixo de positiva
+    rejected = {c.code for o in outs for e in o.evaluations for c in e.criteria if c.code.startswith("U") and not c.passed}
+    assert {"U1", "U2"} <= rejected  # as regras de fato barram entradas
