@@ -10,3 +10,7 @@ backend/data/*.db
 .env
 node_modules/
 frontend/dist/
+
+# dados de mercado brutos (licenciados) nunca vão para o git
+backend/data/raw/
+*.zip
