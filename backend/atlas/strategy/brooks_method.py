@@ -47,7 +47,7 @@ from atlas.price_action.regime import Regime
 from atlas.strategy.base import Criterion, SetupEvaluation, Signal, StrategySpec, params_hash
 
 STRATEGY_ID = "brooks_method"
-STRATEGY_VERSION = "1.2.0"
+STRATEGY_VERSION = "1.3.0"
 
 SETUP_NAMES = {
     "S1": "H2/L2 tendência", "S2": "H1/L1 tendência forte", "S3": "H3/L3 cunha", "S4": "H4/L4",
@@ -81,6 +81,9 @@ class BrooksMethodParams(BaseModel):
     flatten_minutes_before_close: int = Field(5, ge=0, le=60)
     enabled_setups: list[str] | None = None  # None = todos
     time_exit_bars: int = 0
+    be_on_favorable_close: bool = Field(True, description="Gestão: barra fecha a favor → stop no zero a zero")
+    trail_bar: bool = Field(False, description="Gestão: trailing stop por barra (ponta oposta de cada barra a favor)")
+    manage_after_bars: int = Field(10, ge=0, description="Gestão: a partir da barra N do trade, barra contra → saída no fechamento (0 = desliga)")
     user_rules: bool = Field(True, description="v1.2: regras da revisão do usuário (U1–U6)")
     lateral_slope_atr: float = Field(0.3, ge=0, description="U1: |EMA(t) − EMA(t−10)| abaixo disso (em ATR) …")
     lateral_crosses: int = Field(3, ge=1, description="U1: … e pelo menos N cruzamentos do fechamento com a EMA em 20 barras")
@@ -465,6 +468,8 @@ class BrooksMethodStrategy:
                     pullback_start_ts=bar.ts_open, criteria=crit,
                     context={"regime": snap.regime.as_dict(), "bar": m.as_dict(), "setup_name": SETUP_NAMES[setup]},
                     order_type=otype, lot_role="entry",
-                    extra_targets=(self.cs.round_to_tick(t2, "down" if d > 0 else "up"),), breakeven_after_first=True)
+                    extra_targets=(self.cs.round_to_tick(t2, "down" if d > 0 else "up"),), breakeven_after_first=True,
+                    be_on_favorable_close=p.be_on_favorable_close, trail_bar=p.trail_bar,
+                    manage_after_bars=p.manage_after_bars)
             out.append(SetupEvaluation(STRATEGY_ID, side, setup, bar, "candidate", crit, passed, bar.ts_open, signal))
         return out

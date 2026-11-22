@@ -145,3 +145,54 @@ def test_user_rules_no_lookahead_and_criteria_enforced():
         assert (b.close - b.open) * s.side.sign > 0  # nunca compra acima de barra negativa / vende abaixo de positiva
     rejected = {c.code for o in outs for e in o.evaluations for c in e.criteria if c.code.startswith("U") and not c.passed}
     assert {"U1", "U2"} <= rejected  # as regras de fato barram entradas
+
+
+# ----------------------------------------------------------------------- gestão barra a barra
+def _bracket(signal_kw, rows):
+    from dataclasses import replace
+    bars = mk(rows)
+    sim = BracketSimulator("WIN", CostModel(entry_slippage_ticks=0, exit_slippage_ticks=0))
+    sim.on_bar(bars[0])
+    sig = replace(make_signal(bars[0], entry=100055, stop=99945, target=100500), **signal_kw)
+    sim.submit(sig, bars[0])
+    for b in bars[1:]:
+        sim.on_bar(b)
+    return sim
+
+
+def test_favorable_close_moves_stop_to_entry():
+    sim = _bracket({"be_on_favorable_close": True}, [
+        (100000, 100050, 99950, 100020),
+        (100020, 100100, 100010, 100090),   # entra em 100055 e fecha a favor (100090) → stop no zero
+        (100090, 100095, 99900, 99920)])    # despenca: sai no zero a zero, não no stop original
+    t = sim.closed[0]
+    assert t.exit_reason == "breakeven" and t.points == 0 and t.net_r == 0
+
+
+def test_without_favorable_close_original_stop_stays():
+    sim = _bracket({"be_on_favorable_close": True}, [
+        (100000, 100050, 99950, 100020),
+        (100020, 100060, 100010, 100030),   # entra em 100055 mas fecha abaixo da entrada → stop não muda
+        (100030, 100035, 99900, 99920)])
+    t = sim.closed[0]
+    assert t.exit_reason == "stop" and t.exit_price == 99945 and t.net_r == -1.0
+
+
+def test_trailing_stop_by_bar_and_r_uses_initial_risk():
+    sim = _bracket({"be_on_favorable_close": True, "trail_bar": True}, [
+        (100000, 100050, 99950, 100020),
+        (100020, 100100, 100010, 100090),   # barra a favor: stop → máx(entrada, 100010−5) = entrada
+        (100090, 100200, 100080, 100190),   # barra a favor: stop → 100080 − 5 = 100075
+        (100190, 100195, 100000, 100010)])  # volta: sai no stop móvel 100075 (+20 pontos)
+    t = sim.closed[0]
+    assert t.exit_reason == "trailing" and t.exit_price == 100075
+    assert abs(t.net_r - 20 / 110) < 1e-3  # R sobre o risco inicial (110), não sobre o stop movido
+
+
+def test_after_n_bars_bar_closing_against_exits_at_close():
+    rows = [(100000, 100050, 99950, 100020), (100020, 100070, 100010, 100060)]
+    rows += [(100060, 100075, 100050, 100070)] * 3          # barras a favor, sem alvo
+    rows += [(100070, 100080, 100030, 100040)]              # 6ª barra do trade fecha contra
+    sim = _bracket({"manage_after_bars": 5}, rows)
+    t = sim.closed[0]
+    assert t.exit_reason == "bar_exit" and t.exit_price == 100040 and t.bars_held == 5

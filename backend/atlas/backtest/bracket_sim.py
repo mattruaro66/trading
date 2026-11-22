@@ -214,6 +214,7 @@ class BracketSimulator:
         for k, tgt in enumerate(targets):
             g = p.group if k == 0 else next(self._groups)
             t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, stop, tgt, entry_gap=gap, qty=p.qty)
+            t.initial_risk = abs(fill - stop) or s.risk_points
             t.lot = "scalp" if (k == 0 and len(targets) > 1) else ("swing" if k > 0 else "único")
             self.lots.append(t)
             self._lot_group[t.trade_id] = g
@@ -267,7 +268,8 @@ class BracketSimulator:
                 px, reason = t.target_price - sign * slip_tgt, "target_gap"
         if reason is None:
             if stop_hit:
-                px, reason = t.stop_price - sign * slip_out, ("breakeven" if t.stop_price == t.entry_price else "stop")
+                locked = (t.stop_price - t.entry_price) * sign
+                px, reason = t.stop_price - sign * slip_out, ("breakeven" if locked == 0 else "trailing" if locked > 0 else "stop")
                 t.ambiguous_bar = tgt_hit
             elif tgt_hit:
                 px, reason = t.target_price - sign * slip_tgt, "target"
@@ -275,10 +277,33 @@ class BracketSimulator:
                 px, reason = bar.close - sign * slip_out, "time_exit"
             elif self._flatten_time(bar):
                 px, reason = bar.close - sign * slip_out, "session_end"
+        if reason is None and t.signal.manage_after_bars and t.bars_held >= t.signal.manage_after_bars \
+                and (bar.close - bar.open) * sign < 0:
+            px, reason = bar.close - sign * slip_out, "bar_exit"
         if reason is None:
+            self._bar_management(t, bar)
             return None
         px = self.spec.round_to_tick(px, "down" if sign > 0 else "up")
         return self._exit(t, bar.ts_close, px, reason)
+
+    def _bar_management(self, t: Trade, bar: Bar) -> None:
+        """Fechamento do candle com o lote aberto: ajusta o stop para o próximo candle (nunca o afrouxa)."""
+        s, sign = t.signal, t.side.sign
+        new = t.stop_price
+        favorable_close = (bar.close - t.entry_price) * sign > 0
+        if s.be_on_favorable_close and favorable_close:
+            new = t.entry_price if (t.entry_price - new) * sign > 0 else new
+        if s.trail_bar and favorable_close and (bar.close - bar.open) * sign > 0:
+            tick = self.spec.tick_size
+            cand = self.spec.round_to_tick(bar.low - tick if sign > 0 else bar.high + tick)
+            if (cand - new) * sign > 0:
+                new = cand
+        if new != t.stop_price:
+            t.stop_price = new
+            o = self._working.get(self._lot_group[t.trade_id], {}).get("stop_loss")
+            if o is not None:
+                o.price = new
+                o.note = "stop no zero a zero (barra fechou a favor)" if new == t.entry_price else "stop móvel por barra"
 
     def _exit(self, t: Trade, ts: datetime, px: float, reason: str) -> ExecEvent:
         g = self._lot_group[t.trade_id]
@@ -288,14 +313,14 @@ class BracketSimulator:
         t.gross_brl = self.spec.pnl_money(t.points, q, px)
         t.costs_brl = self.costs.round_trip_fees(q)
         t.net_brl = round(t.gross_brl - t.costs_brl, 2)
-        risk = abs(t.entry_price - t.stop_price) or t.signal.risk_points
+        risk = t.initial_risk or abs(t.entry_price - t.stop_price) or t.signal.risk_points
         t.r_multiple = round(t.points / risk, 4) if risk else None
         risk_brl = self.spec.pnl_money(risk, q, px)
         t.net_r = round(t.net_brl / risk_brl, 4) if risk_brl else None
         self.lots.remove(t)
         self.closed.append(t)
         self.realized_brl += t.net_brl
-        if reason in ("stop", "stop_gap", "breakeven"):
+        if reason in ("stop", "stop_gap", "breakeven", "trailing"):
             orders = self._snap(self._finish(g, "stop_loss", "filled", ts, px), self._finish(g, "take_profit", "cancelled", ts, note="OCO: stop executado"))
         elif reason in ("target", "target_gap"):
             orders = self._snap(self._finish(g, "take_profit", "filled", ts, px), self._finish(g, "stop_loss", "cancelled", ts, note="OCO: alvo executado"))

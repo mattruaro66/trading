@@ -46,6 +46,7 @@ class Trade:
     r_multiple: float | None = None
     net_r: float | None = None
     qty: float = 1.0  # contratos (futuros) ou lotes (forex) deste lote
+    initial_risk: float | None = None  # distância entrada–stop na execução (o stop pode andar depois)
 
     @property
     def is_open(self) -> bool:
@@ -74,7 +75,7 @@ class Trade:
 ROLE_PT = {"entry": "entrada", "stop_loss": "stop", "take_profit": "alvo", "market_exit": "saída a mercado"}
 STATUS_PT = {"working": "pendente", "filled": "executada", "cancelled": "cancelada", "expired": "expirada"}
 TYPE_PT = {"stop": "stop", "limit": "limitada", "market": "a mercado"}
-EXIT_REASON_PT = {"breakeven": "zero a zero", "stop": "stop", "stop_gap": "stop (gap)", "target": "alvo", "target_gap": "alvo (gap)",
+EXIT_REASON_PT = {"breakeven": "zero a zero", "trailing": "stop móvel", "bar_exit": "barra contra (saída no fechamento)", "stop": "stop", "stop_gap": "stop (gap)", "target": "alvo", "target_gap": "alvo (gap)",
                   "time_exit": "tempo", "session_end": "fim da sessão", "data_gap_exit": "lacuna de dados"}
 
 

@@ -81,6 +81,10 @@ class Signal:
     max_bars_valid: int = 1
     extra_targets: tuple = ()  # alvos de lotes adicionais do mesmo sinal (ex.: swing em 2R)
     breakeven_after_first: bool = False  # Brooks: após o alvo do scalp, stop do lote restante vai para o zero a zero
+    # gestão barra a barra (regras do usuário)
+    be_on_favorable_close: bool = False  # barra fecha a favor (além da entrada) → stop no zero a zero
+    trail_bar: bool = False  # barra a favor fechada → stop 1 tick além da ponta oposta dela (trailing por barra)
+    manage_after_bars: int = 0  # >0: a partir da N-ésima barra, barra que fecha contra → saída no fechamento
 
     @property
     def signal_ts(self) -> datetime:
