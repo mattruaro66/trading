@@ -212,6 +212,12 @@ Resultado em forex (jul/2025–nov/2026, 172 operações, dados já usados para 
 ### 6.2 Critérios de aceitação para qualquer sistema (pré-definidos)
 Amostra ≥ 300 operações fora da amostra; expectativa ≥ +0,10R **com custos reais**, com limite inferior do IC95 > 0; positivo em ≥ 2 de 3 ativos e em ≥ 2 de 3 terços do período; fator de lucro ≥ 1,15; drawdown máximo ≤ 15R.
 
+## 6.3 Estratégia D — "Sempre dentro" (estilo do usuário, experimental)
+
+Extraída das marcações do usuário em 18 pregões reais (artefato "Marcação de pregões"). Código: `backend/atlas/strategy/always_in.py`; testes: `backend/tests/test_strategy_always_in.py`.
+Direção do dia pelo rompimento confirmado da EMA 20 (barra de força além da média + barra seguinte além da média); só opera a favor; ordem stop 1 tick além de toda barra de força a favor; stop na ponta oposta; sem entradas quando o range das últimas 20 barras ≤ 4,2 ATR (limite aprendido das marcações de TTR do usuário); gestão de 2 lotes com zero a zero na barra a favor.
+Resultado sem custos (jul/2025–nov/2026, 3 pares): 8.881 sinais, −0,019R (t −2,5). Nos 18 pregões marcados: −0,038R, contra +0,59R das entradas marcadas pelo usuário com o gráfico inteiro visível (viés de retrospectiva). Entradas com ordem limite ("acima de toda barra ruim") ainda não estão no modelo.
+
 ## 7. Estratégias futuras (não implementadas)
 B. Breakout Pullback · C. Failed Breakout em Trading Range · D. Continuação após rompimento com follow-through.
 Só serão adicionadas depois que o motor da Estratégia A estiver validado com dados reais (critério do roadmap).

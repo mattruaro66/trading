@@ -24,7 +24,10 @@ from atlas.strategy.second_entry import STRATEGY_ID, STRATEGY_VERSION, SecondEnt
 
 
 def _strategy_ids(params) -> tuple[str, str]:
+    from atlas.strategy import always_in as _ai
     from atlas.strategy import brooks_method as _bm
+    if isinstance(params, _ai.AlwaysInParams):
+        return _ai.STRATEGY_ID, _ai.STRATEGY_VERSION
     if isinstance(params, _bm.BrooksMethodParams):
         return _bm.STRATEGY_ID, _bm.STRATEGY_VERSION
     if isinstance(params, _h2l2.H2L2MomentumParams):

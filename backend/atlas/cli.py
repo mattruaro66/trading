@@ -53,6 +53,9 @@ def cmd_backtest(a) -> int:
         params = SecondEntryParams.for_profile(a.profile)
     elif a.strategy == "B":
         params = H2L2MomentumParams(stop_adr_frac=a.stop_adr_frac)
+    elif a.strategy == "D":
+        from atlas.strategy.always_in import AlwaysInParams
+        params = AlwaysInParams()
     else:
         params = BrooksMethodParams()
     r = json_safe(run_backtest(bars, a.symbol, params, costs, min_sample=a.min_sample))
@@ -105,7 +108,7 @@ def main(argv=None) -> int:
     b = sub.add_parser("backtest")
     b.add_argument("--symbol", required=True, choices=["WIN", "WDO", "EURUSD", "USDJPY", "USDBRL"])
     b.add_argument("--contract", required=True)
-    b.add_argument("--strategy", default="A", choices=["A", "B", "C"], help="A=Second Entry, B=usuário, C=Método Brooks")
+    b.add_argument("--strategy", default="A", choices=["A", "B", "C", "D"], help="A=Second Entry, B=usuário, C=Método Brooks, D=Sempre dentro")
     b.add_argument("--profile", default="daytrade", choices=["scalp", "daytrade"])
     b.add_argument("--risk", type=float, default=None, help="Risco fixo por operação na moeda da conta (ex.: 40)")
     b.add_argument("--spread-ticks", type=float, default=0.0, help="Meio spread por lado, em ticks")
