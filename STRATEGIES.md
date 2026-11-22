@@ -201,6 +201,15 @@ Sem janela de horário, sem exigência de posição, sem limite de contratos e s
 Filtro adicional apenas no backtest simulado: sinais em candles com dados inválidos não são executados.
 Lotes abertos são zerados no fim do pregão (escopo day trade do projeto).
 
+### 6.1 Sistema D — hipótese derivada da estratégia B (NÃO validado)
+
+Configuração: `H2L2MomentumParams(stop_adr_frac=0.10, enable_legs=False, enable_momentum=False, min_stop_atr=1.0, min_stop_action="widen", tech_target_r=2.0)`.
+Entrada só na BARRA 2x a favor da tendência (a mercado na abertura seguinte); stop técnico além da barra, alargado até no mínimo 1 × ATR, sem execução acima de 10% do ADR; alvo 2R; risco fixo por operação; zera no fim da sessão.
+Resultado em forex (jul/2025–nov/2026, 172 operações, dados já usados para escolher a regra): +0,14R sem custos (IC95 inclui zero); ≈ 0 com 0,5 pip de spread; negativo com 1 pip. Validação exigida: histórico nunca usado (2020–jun/2025) e custos reais, critérios em §6.2.
+
+### 6.2 Critérios de aceitação para qualquer sistema (pré-definidos)
+Amostra ≥ 300 operações fora da amostra; expectativa ≥ +0,10R **com custos reais**, com limite inferior do IC95 > 0; positivo em ≥ 2 de 3 ativos e em ≥ 2 de 3 terços do período; fator de lucro ≥ 1,15; drawdown máximo ≤ 15R.
+
 ## 7. Estratégias futuras (não implementadas)
 B. Breakout Pullback · C. Failed Breakout em Trading Range · D. Continuação após rompimento com follow-through.
 Só serão adicionadas depois que o motor da Estratégia A estiver validado com dados reais (critério do roadmap).

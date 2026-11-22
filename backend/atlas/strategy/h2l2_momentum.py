@@ -67,6 +67,7 @@ class H2L2MomentumParams(BaseModel):
     tech_stop_ref: str = Field("signal_bar", description="signal_bar | pullback (extremo do pullback, só H/L)")
     tech_target_r: float | None = Field(None, gt=0, description="Pesquisa: alvo em R no stop técnico (padrão 300/200)")
     momentum_require_expressive: bool = Field(True, description="v1.1: exige candles expressivos e tendência/rompimento")
+    enable_legs: bool = Field(True, description="Entradas H2/L2 e H3/L3")
     enable_momentum: bool = True
     enable_big_bar: bool = True
     flatten_minutes_before_close: int = Field(5, ge=0, le=60)
@@ -149,9 +150,9 @@ class H2L2MomentumStrategy:
 
         # Todas as regras do plano que dispararem neste candle são executadas (sem prioridade entre elas).
         triggered = []
-        if cand == 2 and in_trend:
+        if cand == 2 and in_trend and p.enable_legs:
             triggered.append(("leg", legs.label(2), "entry", common + [Criterion("R1", f"Barra de sinal do {legs.label(2)}", True, legs.label(2), legs.label(2))]))
-        elif cand == 3 and p.add_on_third and in_trend:
+        elif cand == 3 and p.add_on_third and in_trend and p.enable_legs:
             triggered.append(("leg", legs.label(3), "add", common + [Criterion("R2", f"Barra de sinal do {legs.label(3)}: aumenta a mão x1", True, legs.label(3), legs.label(3))]))
         avg = sum(prior) / len(prior) if len(prior) == p.big_bar_lookback else None
         if p.enable_big_bar and in_trend and avg and d == trend.sign and m.range > p.big_bar_multiple * avg:
