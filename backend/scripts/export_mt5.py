@@ -31,14 +31,29 @@ def main() -> int:
     ap.add_argument("--fim", default=None, help="Data final (padrão: hoje)")
     ap.add_argument("--saida", default="atlas_dados", help="Pasta de saída")
     ap.add_argument("--simbolos", nargs="*", default=None, help="Exportar só estes símbolos (opcional)")
+    ap.add_argument("--terminal", default=None,
+                    help=r"Caminho do terminal64.exe (ex.: C:\Program Files\MetaTrader 5\terminal64.exe)")
+    ap.add_argument("--espera", type=int, default=120, help="Segundos para esperar o MT5 responder")
     a = ap.parse_args()
 
-    if not mt5.initialize():
-        print("Não foi possível conectar ao MetaTrader 5:", mt5.last_error())
-        print("Deixe o MT5 aberto e logado na conta da corretora (não só na conta MQL5/Gmail).")
+    kw = {"timeout": a.espera * 1000}
+    if a.terminal:
+        kw["path"] = a.terminal
+    print("Conectando ao MetaTrader 5 (pode levar até", a.espera, "segundos)...")
+    if not mt5.initialize(**kw):
+        err = mt5.last_error()
+        print("Não foi possível conectar ao MetaTrader 5:", err)
+        print("Verifique:")
+        print("  1) o MT5 está aberto e LOGADO numa conta (demo serve) — canto inferior direito verde, não '0 / 0 Kb';")
+        print("  2) informe o caminho do MT5:  --terminal \"C:\\Program Files\\MetaTrader 5\\terminal64.exe\"")
+        print("  3) MT5 e esta janela abertos do mesmo jeito (ambos normais ou ambos 'como administrador').")
         return 1
-    term, acc = mt5.terminal_info(), mt5.account_info()
-    print(f"Terminal: {term.name if term else '?'} | servidor: {acc.server if acc else 'sem conta logada'}")
+    acc = mt5.account_info()
+    if acc is None:
+        print("O MT5 respondeu, mas não há conta logada. Faça login (Arquivo → Abrir uma conta → MetaQuotes-Demo).")
+    term = mt5.terminal_info()
+    print(f"Terminal: {term.name if term else '?'} | conectado: {term.connected if term else '?'} | "
+          f"servidor: {acc.server if acc else 'sem conta logada'}")
 
     todos = mt5.symbols_get() or []
     nomes = [s.name for s in todos if any(s.name.upper().startswith(p) for p in a.prefixos)]
