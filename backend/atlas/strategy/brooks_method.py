@@ -47,7 +47,7 @@ from atlas.price_action.regime import Regime
 from atlas.strategy.base import Criterion, SetupEvaluation, Signal, StrategySpec, params_hash
 
 STRATEGY_ID = "brooks_method"
-STRATEGY_VERSION = "1.0.0"
+STRATEGY_VERSION = "1.1.0"
 
 SETUP_NAMES = {
     "S1": "H2/L2 tendência", "S2": "H1/L1 tendência forte", "S3": "H3/L3 cunha", "S4": "H4/L4",
@@ -81,6 +81,7 @@ class BrooksMethodParams(BaseModel):
     flatten_minutes_before_close: int = Field(5, ge=0, le=60)
     enabled_setups: list[str] | None = None  # None = todos
     time_exit_bars: int = 0
+    always_stop_entry: bool = Field(True, description="Entrada sempre por ordem stop na ativação (S17/S18 também); False = a mercado")
 
     @property
     def target_r(self) -> float:
@@ -351,6 +352,8 @@ class BrooksMethodStrategy:
             micro_against = self.micro[-d] >= 5
             climax = self.i <= self.climax_until[d] and setup not in REVERSAL_SETUPS
             tick = self.cs.tick_size
+            if otype == "market" and p.always_stop_entry:
+                otype = "stop"  # regra do usuário: entrada sempre na ativação, stop 1 tick fora da ponta oposta
             if otype == "market":
                 entry = bar.close
                 pb = self.h[-2].bar if len(self.h) >= 2 else bar  # barra anterior (h já inclui a atual)

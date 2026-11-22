@@ -113,9 +113,13 @@ def test_trend_from_the_open_market_entry():
     last = day1[-1].close
     day2 = mk([(last, last + 65, last - 5, last + 60), (last + 60, last + 125, last + 55, last + 120),
                (last + 120, last + 160, last + 115, last + 150)], start=s2.open)
-    pipe = AnalysisPipeline("WIN", BrooksMethodParams())
-    outs = [pipe.on_bar_closed(b) for b in day1 + day2]
-    ev = [e for e in outs[-2].evaluations if e.setup_label == "S17"]
-    assert ev  # tendência desde a abertura reconhecida no 2º candle do pregão
-    sig = next(s for s in outs[-2].signals if s.setup_label in ("S17", "S18"))  # um sinal por direção
-    assert sig.order_type == "market" and sig.side is Side.LONG
+    for always_stop, otype in ((False, "market"), (True, "stop")):
+        pipe = AnalysisPipeline("WIN", BrooksMethodParams(always_stop_entry=always_stop))
+        outs = [pipe.on_bar_closed(b) for b in day1 + day2]
+        ev = [e for e in outs[-2].evaluations if e.setup_label == "S17"]
+        assert ev  # tendência desde a abertura reconhecida no 2º candle do pregão
+        sig = next(s for s in outs[-2].signals if s.setup_label in ("S17", "S18"))  # um sinal por direção
+        assert sig.order_type == otype and sig.side is Side.LONG
+        if otype == "stop":  # ativação 1 tick acima da barra de sinal, stop 1 tick abaixo dela
+            sb = sig.signal_bar
+            assert sig.entry_price == sb.high + 5 and sig.stop_price == sb.low - 5
