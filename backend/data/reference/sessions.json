@@ -2,7 +2,33 @@
   "validated": false,
   "validation_note": "Horários da sessão regular (America/Sao_Paulo). A B3 altera horários por circular (ex.: ajustes ligados ao horário de verão dos EUA). Conferir as circulares vigentes e adicionar novas versões com 'effective_from'.",
   "sessions": [
-    {"symbol": "WIN", "effective_from": "2000-01-01", "open": "09:00", "close": "18:25"},
-    {"symbol": "WDO", "effective_from": "2000-01-01", "open": "09:00", "close": "18:30"}
+    {
+      "symbol": "WIN",
+      "effective_from": "2000-01-01",
+      "open": "09:00",
+      "close": "18:25"
+    },
+    {
+      "symbol": "WDO",
+      "effective_from": "2000-01-01",
+      "open": "09:00",
+      "close": "18:30"
+    },
+    {
+      "symbol": "EURUSD",
+      "effective_from": "2000-01-01",
+      "open": "08:00",
+      "close": "17:00",
+      "tz": "Europe/London",
+      "calendar": "fx"
+    },
+    {
+      "symbol": "USDJPY",
+      "effective_from": "2000-01-01",
+      "open": "08:00",
+      "close": "17:00",
+      "tz": "Europe/London",
+      "calendar": "fx"
+    }
   ]
 }

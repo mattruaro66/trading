@@ -45,3 +45,12 @@ O sistema expõe esses status em `/api/market/contracts` e no Dashboard.
 
 ## 5. Macro (Fase 4)
 Fontes previstas: Banco Central (SGS, Focus, Copom), IBGE (SIDRA), Tesouro Nacional, B3; Federal Reserve, BLS, BEA, U.S. Treasury. Nenhuma está integrada no MVP; o motor de explicação declara explicitamente “contexto macro não verificado”.
+
+## 6. Forex para validação do método (EURUSD, USDJPY)
+
+Para validar o price action em dados reais enquanto não há histórico de WIN/WDO, o ATLAS aceita EURUSD e USDJPY exportados do MetaTrader 5 (`backend/scripts/export_mt5.py`).
+- **Sessão:** só Londres/Nova York, 08:00–17:00 de Londres (com o horário de verão britânico). Candles fora dela são descartados na importação.
+- **Horário:** o fuso do servidor MT5 é detectado semana a semana pela abertura do forex (domingo, 17:00 de Nova York).
+- **Moeda e tamanho:** resultados em US$. O tamanho do lote é calculado em cada operação para que a perda no stop (com spread, slippage e arredondamento) não passe do orçamento (`risk_per_trade`, ex.: US$ 40 ≈ R$ 200).
+- **Estratégia B:** stop como fração do range diário médio (`stop_adr_frac`); o alvo mantém a proporção 300/200.
+- **Limitação:** valida o método de price action, não o comportamento específico do WIN/WDO.

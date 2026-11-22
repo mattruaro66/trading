@@ -52,6 +52,8 @@ class H2L2MomentumParams(BaseModel):
     consecutive_bars: int = Field(3, ge=2, le=10)
     big_bar_multiple: float = Field(2.0, gt=1)
     big_bar_lookback: int = Field(7, ge=2, le=50)
+    # Outros mercados (forex): stop como fração do range diário médio; o alvo mantém a proporção alvo/stop (300/200)
+    stop_adr_frac: float | None = Field(None, gt=0, le=1)
     lateral_filter: bool = True  # não conta H/L em lateralidade (3+ barras com fechamento dentro da barra anterior)
     lateral_min_bars: int = Field(3, ge=2, le=20)
     enable_momentum: bool = True
@@ -104,11 +106,20 @@ class H2L2MomentumStrategy:
         if trend is None or (trend is Side.LONG and not p.allow_long) or (trend is Side.SHORT and not p.allow_short):
             return out
         legs = snap.legs(trend)
+        stop_pts, tgt_pts = p.stop_points, p.target_points
+        adr_ok = True
+        if p.stop_adr_frac is not None:
+            adr = snap.lateral.adr if snap.lateral is not None else None
+            adr_ok = adr is not None
+            if adr_ok:
+                stop_pts = max(self.cs.tick_size, self.cs.round_to_tick(p.stop_adr_frac * adr))
+                tgt_pts = self.cs.round_to_tick(stop_pts * p.target_points / p.stop_points)
         common = [
             Criterion("T1", "Sempre a favor da tendência", True, regime.value, "BULL_TREND/BEAR_TREND"),
             # filtro de qualidade de dados: aplica-se somente ao backtest/simulação deste modelo
             Criterion("T3", "Dados válidos na janela de análise", snap.data_ok, snap.data_ok, True),
-        ]
+        ] + ([] if p.stop_adr_frac is None else [
+            Criterion("T4", "Range diário médio disponível (stop proporcional)", adr_ok, adr_ok, True)])
 
         cand = legs.candidate_for
         if cand not in (2, 3) and legs.in_pullback:
@@ -146,12 +157,12 @@ class H2L2MomentumStrategy:
                 signal = Signal(
                     strategy_id=STRATEGY_ID, strategy_version=STRATEGY_VERSION, params_hash=self.params_hash, profile=p.profile,
                     symbol=self.symbol, contract=bar.contract, side=trend, signal_bar=bar, setup_label=label, entry_price=entry,
-                    stop_price=self.cs.round_to_tick(entry - sign * p.stop_points),
-                    target_price=self.cs.round_to_tick(entry + sign * p.target_points), risk_points=p.stop_points,
-                    risk_ticks=self.cs.price_diff_to_ticks(p.stop_points), target_r=p.target_r, time_exit_bars=0,
+                    stop_price=self.cs.round_to_tick(entry - sign * stop_pts),
+                    target_price=self.cs.round_to_tick(entry + sign * tgt_pts), risk_points=stop_pts,
+                    risk_ticks=self.cs.price_diff_to_ticks(stop_pts), target_r=p.target_r, time_exit_bars=0,
                     pullback_start_ts=pb, criteria=tuple(crit),
                     context={"regime": snap.regime.as_dict(), "bar": m.as_dict(), "legs": {"count": legs.count}},
-                    order_type=otype, lot_role=role, stop_points=p.stop_points, target_points=p.target_points)
+                    order_type=otype, lot_role=role, stop_points=stop_pts, target_points=tgt_pts)
             out.append(SetupEvaluation(STRATEGY_ID, trend, label, bar, "candidate", tuple(crit), passed,
                                        signal.pullback_start_ts if signal else legs.pullback_start_ts, signal))
         return out

@@ -38,13 +38,22 @@ def cmd_backtest(a) -> int:
     from atlas.backtest.costs import CostModel
     from atlas.backtest.engine import run_backtest
     from atlas.reporting.serialize import json_safe
+    from atlas.strategy.brooks_method import BrooksMethodParams
+    from atlas.strategy.h2l2_momentum import H2L2MomentumParams
     from atlas.strategy.second_entry import SecondEntryParams
     bars = _repo().load_bars(a.symbol, a.contract)
     if not bars:
         print("Nenhum candle armazenado para esse contrato.", file=sys.stderr)
         return 1
-    costs = CostModel(brokerage_per_contract_side=a.brokerage, exchange_fees_per_contract_side=a.fees, contracts=a.contracts)
-    r = json_safe(run_backtest(bars, a.symbol, SecondEntryParams.for_profile(a.profile), costs, min_sample=a.min_sample))
+    costs = CostModel(brokerage_per_contract_side=a.brokerage, exchange_fees_per_contract_side=a.fees, contracts=a.contracts,
+                      risk_per_trade=a.risk, spread_ticks=a.spread_ticks)
+    if a.strategy == "A":
+        params = SecondEntryParams.for_profile(a.profile)
+    elif a.strategy == "B":
+        params = H2L2MomentumParams(stop_adr_frac=a.stop_adr_frac)
+    else:
+        params = BrooksMethodParams()
+    r = json_safe(run_backtest(bars, a.symbol, params, costs, min_sample=a.min_sample))
     s = r["stats"]
     for w in r["warnings"]:
         print("AVISO:", w)
@@ -84,19 +93,23 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     i = sub.add_parser("import")
     i.add_argument("file")
-    i.add_argument("--symbol", required=True, choices=["WIN", "WDO"])
+    i.add_argument("--symbol", required=True, choices=["WIN", "WDO", "EURUSD", "USDJPY"])
     i.add_argument("--contract", required=True)
     i.add_argument("--timestamp-label", default="open", choices=["open", "close"])
     i.add_argument("--resample-from-1m", action="store_true")
     i.add_argument("--replace", action="store_true")
     i.set_defaults(fn=cmd_import)
     b = sub.add_parser("backtest")
-    b.add_argument("--symbol", required=True, choices=["WIN", "WDO"])
+    b.add_argument("--symbol", required=True, choices=["WIN", "WDO", "EURUSD", "USDJPY"])
     b.add_argument("--contract", required=True)
+    b.add_argument("--strategy", default="A", choices=["A", "B", "C"], help="A=Second Entry, B=usuário, C=Método Brooks")
     b.add_argument("--profile", default="daytrade", choices=["scalp", "daytrade"])
+    b.add_argument("--risk", type=float, default=None, help="Risco fixo por operação na moeda da conta (ex.: 40)")
+    b.add_argument("--spread-ticks", type=float, default=0.0, help="Meio spread por lado, em ticks")
+    b.add_argument("--stop-adr-frac", type=float, default=None, help="Estratégia B: stop como fração do range diário")
     b.add_argument("--brokerage", type=float, default=0.0)
     b.add_argument("--fees", type=float, default=0.0)
-    b.add_argument("--contracts", type=int, default=1)
+    b.add_argument("--contracts", type=float, default=1)
     b.add_argument("--min-sample", type=int, default=30)
     b.add_argument("--out")
     b.set_defaults(fn=cmd_backtest)

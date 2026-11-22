@@ -170,10 +170,10 @@ def is_next_session_open(prev: Bar, cur: Bar, calendar: TradingCalendar | None =
     cal = calendar or load_calendar()
     if prev.contract != cur.contract:
         return False
-    s_prev = cal.session(prev.symbol, prev.ts_open.astimezone(TZ).date())
-    s_cur = cal.session(cur.symbol, cur.ts_open.astimezone(TZ).date())
+    s_prev = cal.session_for_ts(prev.symbol, prev.ts_open)
+    s_cur = cal.session_for_ts(cur.symbol, cur.ts_open)
     if not s_prev or not s_cur:
         return False
     last_prev = s_prev.bucket_opens()[-1]
     return (prev.ts_open == last_prev and cur.ts_open == s_cur.open
-            and s_cur.day == cal.next_trading_day(s_prev.day))
+            and s_cur.day == cal.next_trading_day(s_prev.day, prev.symbol))

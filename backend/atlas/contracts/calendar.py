@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from atlas.contracts.specs import REFERENCE_DIR
 from atlas.core.timeframe import TIMEFRAME, TZ
@@ -59,29 +60,34 @@ class TradingCalendar:
     def has_coverage(self, d: date) -> bool:
         return d.year in self._holidays
 
-    def is_trading_day(self, d: date) -> bool:
+    def _is_fx(self, symbol) -> bool:
+        return symbol is not None and Symbol(symbol).is_fx
+
+    def is_trading_day(self, d: date, symbol: Symbol | str | None = None) -> bool:
         if d.weekday() >= 5:
             return False
+        if self._is_fx(symbol):
+            return True  # forex: dias úteis (feriados sem dados aparecem como lacunas)
         if not self.has_coverage(d):
             # Sem cobertura: considera apenas fim de semana e marca a incerteza via has_coverage().
             return True
         return d not in self._holidays[d.year]
 
-    def next_trading_day(self, d: date) -> date:
+    def next_trading_day(self, d: date, symbol: Symbol | str | None = None) -> date:
         d = d + timedelta(days=1)
-        while not self.is_trading_day(d):
+        while not self.is_trading_day(d, symbol):
             d += timedelta(days=1)
         return d
 
-    def prev_trading_day(self, d: date) -> date:
+    def prev_trading_day(self, d: date, symbol: Symbol | str | None = None) -> date:
         d = d - timedelta(days=1)
-        while not self.is_trading_day(d):
+        while not self.is_trading_day(d, symbol):
             d -= timedelta(days=1)
         return d
 
     def session(self, symbol: Symbol | str, d: date) -> SessionWindow | None:
         sym = Symbol(symbol)
-        if not self.is_trading_day(d):
+        if not self.is_trading_day(d, sym):
             return None
         versions = [s for s in self._sessions if s["symbol"] == sym.value and s["effective_from"] <= d]
         if not versions:
@@ -89,6 +95,10 @@ class TradingCalendar:
         v = versions[-1]
         open_t, close_t = v["open"], v["close"]
         note = None
+        if v.get("tz"):  # sessão definida em outro fuso (ex.: Londres/NY no forex), convertida para America/Sao_Paulo
+            z = ZoneInfo(v["tz"])
+            return SessionWindow(sym, d, datetime.combine(d, open_t, z).astimezone(TZ),
+                                 datetime.combine(d, close_t, z).astimezone(TZ), f"sessão {v['tz']}")
         if d in self._special:
             sp = self._special[d]
             if "open" in sp:
@@ -100,7 +110,9 @@ class TradingCalendar:
 
     def session_for_ts(self, symbol: Symbol | str, ts: datetime) -> SessionWindow | None:
         local = ts.astimezone(TZ)
-        s = self.session(symbol, local.date())
+        tzname = next((x.get("tz") for x in self._sessions if x["symbol"] == Symbol(symbol).value and x.get("tz")), None)
+        day = ts.astimezone(ZoneInfo(tzname)).date() if tzname else local.date()
+        s = self.session(symbol, day)
         if s and s.contains(local):
             return s
         return None
@@ -119,6 +131,7 @@ def load_calendar(reference_dir: str | None = None) -> TradingCalendar:
             "effective_from": date.fromisoformat(x["effective_from"]),
             "open": time.fromisoformat(x["open"]),
             "close": time.fromisoformat(x["close"]),
+            "tz": x.get("tz"),
         }
         for x in s["sessions"]
     ]

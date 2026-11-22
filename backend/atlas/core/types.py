@@ -18,6 +18,12 @@ from atlas.core.timeframe import TIMEFRAME
 class Symbol(StrEnum):
     WIN = "WIN"
     WDO = "WDO"
+    EURUSD = "EURUSD"  # forex: usado para validar o método em dados reais (sessão Londres/NY)
+    USDJPY = "USDJPY"
+
+    @property
+    def is_fx(self) -> bool:
+        return self.value in ("EURUSD", "USDJPY")
 
 
 class SeriesKind(StrEnum):

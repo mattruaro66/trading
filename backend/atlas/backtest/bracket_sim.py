@@ -32,6 +32,7 @@ class _Pending:
     placed_after: Bar
     group: int
     order: SimOrder
+    qty: float = 1.0
 
 
 @dataclass
@@ -83,16 +84,17 @@ class BracketSimulator:
         base = {"realized_brl": round(self.realized_brl, 2), "closed_trades": len(self.closed), "working_orders": working}
         if not self.lots:
             return {**base, "state": "pending_entry" if self.pending else "flat"}
-        q = self.costs.contracts
-        net = sum(t.side.sign for t in self.lots)
+        net_qty = round(sum(t.side.sign * t.qty for t in self.lots), 8)
+        net = net_qty
         side = Side.LONG if net > 0 else Side.SHORT if net < 0 else self.lots[0].side
         mark = bar.close if bar else self.lots[0].entry_price
         avg = sum(t.entry_price for t in self.lots) / len(self.lots)
         pts = round(sum((mark - t.entry_price) * t.side.sign for t in self.lots), 10)
-        return {**base, "state": "long" if net > 0 else "short" if net < 0 else "hedged", "qty": q * abs(net),
+        unreal = round(sum(self.spec.pnl_money((mark - t.entry_price) * t.side.sign, t.qty, mark) for t in self.lots), 2)
+        return {**base, "state": "long" if net > 0 else "short" if net < 0 else "hedged", "qty": abs(net_qty),
                 "lots_open": len(self.lots),
                 "entry_price": round(avg, 2), "mark_price": mark, "unrealized_points": pts,
-                "unrealized_brl": self.spec.pnl_brl(pts, q),
+                "unrealized_brl": unreal,
                 "stop_price": self.lots[-1].stop_price, "target_price": self.lots[-1].target_price,
                 "bars_held": max(t.bars_held for t in self.lots), "setup": "+".join(t.signal.setup_label for t in self.lots),
                 "lots": [{"setup": t.signal.setup_label, "side": t.side.value, "entry": t.entry_price, "stop": t.stop_price, "target": t.target_price}
@@ -100,8 +102,9 @@ class BracketSimulator:
 
     # ------------------------------------------------------------------ ordens
     def _order(self, group: int, role: str, action: str, otype: str, price: float | None, ts: datetime, setup: str,
-               note: str = "") -> SimOrder:
-        o = SimOrder(next(self._order_ids), group, role, action, otype, self.costs.contracts, price, ts, note=note, setup=setup)
+               note: str = "", qty: float | None = None) -> SimOrder:
+        o = SimOrder(next(self._order_ids), group, role, action, otype, self.costs.contracts if qty is None else qty,
+                     price, ts, note=note, setup=setup)
         self.orders.append(o)
         self._working.setdefault(group, {})[role] = o
         return o
@@ -124,16 +127,23 @@ class BracketSimulator:
     def submit(self, signal: Signal, signal_bar: Bar) -> ExecEvent:
         if self.max_lots is not None and self.exposure() >= self.max_lots:
             return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="max_lots")
+        n_lots = 1 + len(signal.extra_targets)
+        risk_pts = signal.stop_points if signal.stop_points is not None else signal.risk_points
+        qty = self.costs.quantity(self.spec, risk_pts, signal.entry_price, n_lots)
+        if qty <= 0:
+            return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="risk_exceeds_budget_at_min_size")
         g = next(self._groups)
         action = "buy" if signal.side is Side.LONG else "sell"
         role = "entry"
         if signal.order_type == "market":
             o = self._order(g, role, action, "market", None, signal_bar.ts_close, signal.setup_label,
-                            ("aumento de mão · " if signal.lot_role == "add" else "") + "a mercado na abertura do próximo candle")
+                            ("aumento de mão · " if signal.lot_role == "add" else "") + "a mercado na abertura do próximo candle",
+                            qty=round(qty * n_lots, 8))
         else:
             o = self._order(g, role, action, "stop", signal.entry_price, signal_bar.ts_close, signal.setup_label,
-                            ("aumento de mão · " if signal.lot_role == "add" else "") + "válida somente no próximo candle de 5 min")
-        self.pending.append(_Pending(signal, signal_bar, g, o))
+                            ("aumento de mão · " if signal.lot_role == "add" else "") + "válida somente no próximo candle de 5 min",
+                            qty=round(qty * n_lots, 8))
+        self.pending.append(_Pending(signal, signal_bar, g, o, qty))
         return ExecEvent("order_placed", signal_bar.ts_close, signal, orders=self._snap(o))
 
     # ------------------------------------------------------------------ candle
@@ -203,13 +213,13 @@ class BracketSimulator:
         new_lots, snaps = [], [entry]
         for k, tgt in enumerate(targets):
             g = p.group if k == 0 else next(self._groups)
-            t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, stop, tgt, entry_gap=gap)
+            t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, stop, tgt, entry_gap=gap, qty=p.qty)
             t.lot = "scalp" if (k == 0 and len(targets) > 1) else ("swing" if k > 0 else "único")
             self.lots.append(t)
             self._lot_group[t.trade_id] = g
             tag = "" if len(targets) == 1 else (" · lote scalp" if k == 0 else f" · lote swing {k}")
-            snaps.append(self._order(g, "stop_loss", exit_action, "stop", stop, bar.ts_open, s.setup_label, "OCO com o alvo deste lote" + tag))
-            snaps.append(self._order(g, "take_profit", exit_action, "limit", tgt, bar.ts_open, s.setup_label, "OCO com o stop deste lote" + tag))
+            snaps.append(self._order(g, "stop_loss", exit_action, "stop", stop, bar.ts_open, s.setup_label, "OCO com o alvo deste lote" + tag, qty=p.qty))
+            snaps.append(self._order(g, "take_profit", exit_action, "limit", tgt, bar.ts_open, s.setup_label, "OCO com o stop deste lote" + tag, qty=p.qty))
             new_lots.append(t)
         for t in new_lots:
             self._siblings[t.trade_id] = [x for x in new_lots if x is not t]
@@ -267,13 +277,13 @@ class BracketSimulator:
         g = self._lot_group[t.trade_id]
         t.exit_ts, t.exit_price, t.exit_reason = ts, px, reason
         t.points = round((px - t.entry_price) * t.side.sign, 10)
-        q = self.costs.contracts
-        t.gross_brl = self.spec.pnl_brl(t.points, q)
-        t.costs_brl = self.costs.round_trip_fees()
+        q = t.qty
+        t.gross_brl = self.spec.pnl_money(t.points, q, px)
+        t.costs_brl = self.costs.round_trip_fees(q)
         t.net_brl = round(t.gross_brl - t.costs_brl, 2)
         risk = abs(t.entry_price - t.stop_price) or t.signal.risk_points
         t.r_multiple = round(t.points / risk, 4) if risk else None
-        risk_brl = self.spec.pnl_brl(risk, q)
+        risk_brl = self.spec.pnl_money(risk, q, px)
         t.net_r = round(t.net_brl / risk_brl, 4) if risk_brl else None
         self.lots.remove(t)
         self.closed.append(t)
@@ -288,7 +298,8 @@ class BracketSimulator:
             why = EXIT_REASON_PT.get(reason, reason)
             a = self._finish(g, "stop_loss", "cancelled", ts, note=f"saída por {why}")
             b = self._finish(g, "take_profit", "cancelled", ts, note=f"saída por {why}")
-            m = self._order(g, "market_exit", "sell" if t.side is Side.LONG else "buy", "market", None, ts, t.signal.setup_label, f"saída por {why}")
+            m = self._order(g, "market_exit", "sell" if t.side is Side.LONG else "buy", "market", None, ts, t.signal.setup_label,
+                            f"saída por {why}", qty=t.qty)
             self._finish(g, "market_exit", "filled", ts, px)
             orders = self._snap(a, b, m)
         return ExecEvent("closed", ts, t.signal, t, reason, orders=orders)

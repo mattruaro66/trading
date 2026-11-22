@@ -45,6 +45,7 @@ class Trade:
     net_brl: float | None = None
     r_multiple: float | None = None
     net_r: float | None = None
+    qty: float = 1.0  # contratos (futuros) ou lotes (forex) deste lote
 
     @property
     def is_open(self) -> bool:
@@ -66,6 +67,7 @@ class Trade:
             "regime": s.context.get("regime", {}).get("regime"),
             "hour": s.signal_bar.ts_close.astimezone(TZ).hour,
             "lot": getattr(self, "lot", "único"),
+            "qty": self.qty,
         }
 
 
@@ -122,6 +124,7 @@ class ExecEvent:
 class _Pending:
     signal: Signal
     placed_after: Bar
+    qty: float = 1.0
 
 
 @dataclass
@@ -145,11 +148,14 @@ class TradeSimulator:
         self._working: dict[str, SimOrder] = {}  # role → ordem pendente do grupo atual
         self._group: int | None = None
         self.realized_brl = 0.0
+        self._last_qty = self.costs.contracts
 
     # ---------------- livro de ordens simulado ----------------
     def _new_order(self, role: str, action: str, otype: str, price: float | None, ts: datetime, setup: str,
-                   note: str = "") -> SimOrder:
-        o = SimOrder(next(self._order_ids), self._group or 0, role, action, otype, self.costs.contracts, price, ts,
+                   note: str = "", qty: float | None = None) -> SimOrder:
+        q = qty if qty is not None else (self.pending.qty if self.pending is not None else
+                                         (self.open_trade.qty if self.open_trade else self.costs.contracts))
+        o = SimOrder(next(self._order_ids), self._group or 0, role, action, otype, q, price, ts,
                      note=note, setup=setup)
         self.orders.append(o)
         if o.status == "working":
@@ -179,16 +185,19 @@ class TradeSimulator:
             return {**base, "state": "pending_entry" if self.pending else "flat"}
         mark = bar.close if bar else t.entry_price
         pts = round((mark - t.entry_price) * t.side.sign, 10)
-        return {**base, "state": "long" if t.side is Side.LONG else "short", "qty": self.costs.contracts,
+        return {**base, "state": "long" if t.side is Side.LONG else "short", "qty": t.qty,
                 "entry_price": t.entry_price, "stop_price": t.stop_price, "target_price": t.target_price,
-                "mark_price": mark, "unrealized_points": pts, "unrealized_brl": self.spec.pnl_brl(pts, self.costs.contracts),
+                "mark_price": mark, "unrealized_points": pts, "unrealized_brl": self.spec.pnl_money(pts, t.qty, mark),
                 "bars_held": t.bars_held, "setup": t.signal.setup_label}
 
     # ------------------------------------------------------------------
     def submit(self, signal: Signal, signal_bar: Bar) -> ExecEvent:
         if self.open_trade is not None or self.pending is not None:
             return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="position_or_order_active")
-        self.pending = _Pending(signal, signal_bar)
+        qty = self.costs.quantity(self.spec, signal.risk_points, signal.entry_price)
+        if qty <= 0:
+            return ExecEvent("signal_skipped", signal_bar.ts_close, signal, reason="risk_exceeds_budget_at_min_size")
+        self.pending = _Pending(signal, signal_bar, qty)
         self._group = next(self._groups)
         action = "buy" if signal.side is Side.LONG else "sell"
         o = self._new_order("entry", action, "stop", signal.entry_price, signal_bar.ts_close, signal.setup_label,
@@ -222,6 +231,7 @@ class TradeSimulator:
 
         if self.pending is not None:
             pend = self.pending
+            self._last_qty = pend.qty
             self.pending = None
             if not contiguous or pend.placed_after is not prev:
                 o = self._finish("entry", "cancelled", bar.ts_open, note="candle seguinte ausente/não contíguo")
@@ -256,7 +266,8 @@ class TradeSimulator:
             else:
                 return self._expire(s, bar)
         fill = self.spec.round_to_tick(fill, "up" if sign > 0 else "down")
-        t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, s.stop_price, s.target_price, entry_gap=gap)
+        t = Trade(next(self._ids), s, s.side, bar.ts_open, fill, s.stop_price, s.target_price, entry_gap=gap,
+                  qty=self._last_qty)
         self.open_trade = t
         entry = self._finish("entry", "filled", bar.ts_open, fill, "gap de abertura" if gap else "")
         exit_action = "sell" if s.side is Side.LONG else "buy"
@@ -283,7 +294,7 @@ class TradeSimulator:
         a = self._finish("stop_loss", "cancelled", ts, note=f"saída por {why}")
         b = self._finish("take_profit", "cancelled", ts, note=f"saída por {why}")
         action = "sell" if t.side is Side.LONG else "buy"
-        m = self._new_order("market_exit", action, "market", None, ts, t.signal.setup_label, f"saída por {why}")
+        m = self._new_order("market_exit", action, "market", None, ts, t.signal.setup_label, f"saída por {why}", qty=t.qty)
         self._finish("market_exit", "filled", ts, t.exit_price)
         return self._snap(a, b, m)
 
@@ -327,11 +338,11 @@ class TradeSimulator:
     def _close(self, t: Trade, ts: datetime, px: float, reason: str) -> None:
         t.exit_ts, t.exit_price, t.exit_reason = ts, px, reason
         t.points = round((px - t.entry_price) * t.side.sign, 10)
-        q = self.costs.contracts
-        t.gross_brl = self.spec.pnl_brl(t.points, q)
-        t.costs_brl = self.costs.round_trip_fees()
+        q = t.qty
+        t.gross_brl = self.spec.pnl_money(t.points, q, px)
+        t.costs_brl = self.costs.round_trip_fees(q)
         t.net_brl = round(t.gross_brl - t.costs_brl, 2)
-        risk_brl = self.spec.pnl_brl(t.signal.risk_points, q)
+        risk_brl = self.spec.pnl_money(t.signal.risk_points, q, px)
         t.r_multiple = round(t.points / t.signal.risk_points, 4) if t.signal.risk_points else None
         t.net_r = round(t.net_brl / risk_brl, 4) if risk_brl else None
         self.closed.append(t)

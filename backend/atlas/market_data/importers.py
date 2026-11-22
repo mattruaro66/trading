@@ -6,6 +6,7 @@ Toda suposição (fuso, rótulo do timestamp, coluna de volume) é registrada em
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, time
 import io
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,6 +84,34 @@ def _normalize_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, str, list[str]]:
                 df = df.rename(columns={alt: "timestamp"})
                 break
     return df, fmt, assumptions
+
+
+def fx_server_to_utc(ts: pd.Series, assumptions: list[str]) -> pd.Series:
+    """Converte horários do servidor MT5 (forex) para UTC, detectando o deslocamento semana a semana.
+
+    O mercado de forex abre no domingo às 17:00 de Nova York. A primeira barra de cada semana no arquivo
+    revela o deslocamento do servidor em relação ao UTC (normalmente UTC+2 no inverno e UTC+3 no verão de NY).
+    """
+    ts = pd.to_datetime(ts)
+    week = ts.dt.to_period("W-SAT")  # semanas de domingo a sábado
+    first = ts.groupby(week).transform("min")
+    offsets = {}
+    for wk, f in ts.groupby(week).min().items():
+        sunday = (wk.start_time).normalize()  # domingo
+        ny_open = pd.Timestamp(datetime.combine(sunday.date(), time(17, 0))).tz_localize("America/New_York")
+        ny_open_utc = ny_open.tz_convert("UTC").tz_localize(None)
+        h = round((f - ny_open_utc).total_seconds() / 3600)
+        offsets[wk] = h if -12 <= h <= 14 else None
+    vals = [v for v in offsets.values() if v is not None]
+    if not vals:
+        raise ValueError("Não foi possível detectar o fuso do servidor MT5; informe-o manualmente.")
+    mode = max(set(vals), key=vals.count)
+    off = week.map(lambda w: offsets.get(w) if offsets.get(w) is not None else mode)
+    _ = first
+    assumptions.append(f"Fuso do servidor MT5 detectado pela abertura semanal do forex (17:00 de Nova York): "
+                       f"UTC{'+' if mode >= 0 else ''}{mode} na maioria das semanas "
+                       f"({sorted(set(vals))} ao longo do ano, horário de verão).")
+    return (ts - pd.to_timedelta(off.astype(int), unit="h")).dt.tz_localize("UTC").dt.tz_convert(TZ)
 
 
 def _parse_timestamps(series: pd.Series, fmt: str, label: str, assumptions: list[str]) -> pd.Series:
@@ -189,8 +218,16 @@ def import_bars(
     contract = (contract or file_contract)
     contract = contract.upper() if contract else None
 
+    if sym.is_fx:
+        raw_ts = pd.to_datetime(df["timestamp"].astype(str), format="mixed")
+        ts_series = fx_server_to_utc(raw_ts, assumptions)
+        if timestamp_label == "close":
+            ts_series = ts_series - TIMEFRAME
+        assumptions.append("Forex: mantidos apenas os candles da sessão Londres/Nova York (08:00–17:00 de Londres).")
+    else:
+        ts_series = _parse_timestamps(df["timestamp"], fmt, timestamp_label, assumptions)
     out = pd.DataFrame({
-        "ts_open": _parse_timestamps(df["timestamp"], fmt, timestamp_label, assumptions),
+        "ts_open": ts_series,
         "open": pd.to_numeric(df["open"], errors="coerce"),
         "high": pd.to_numeric(df["high"], errors="coerce"),
         "low": pd.to_numeric(df["low"], errors="coerce"),
@@ -199,6 +236,13 @@ def import_bars(
         "trades": pd.to_numeric(df["trades"], errors="coerce") if "trades" in df else pd.NA,
     })
 
+    if sym.is_fx:
+        inside = [cal.session_for_ts(sym, t.to_pydatetime()) is not None and
+                  cal.session_for_ts(sym, (t + TIMEFRAME - pd.Timedelta(seconds=1)).to_pydatetime()) is not None
+                  for t in out["ts_open"]]
+        n_out = len(out) - sum(inside)
+        out = out[inside].reset_index(drop=True)
+        assumptions.append(f"{n_out} candles fora da janela Londres/NY descartados.")
     minutes = _detect_minutes(out["ts_open"])
     if minutes is None:
         assumptions.append("Poucos candles para inferir o intervalo; assumido 5 min (a grade de 5 min é validada candle a candle).")

@@ -40,7 +40,7 @@ PROFILES = {
     "daytrade": {"target_r": 2.0, "time_exit_bars": 24},
 }
 
-DEFAULT_RISK_TICKS = {Symbol.WIN: (4, 80), Symbol.WDO: (2, 40)}
+DEFAULT_RISK_TICKS = {Symbol.WIN: (4, 80), Symbol.WDO: (2, 40), Symbol.EURUSD: (20, 600), Symbol.USDJPY: (20, 600)}
 
 
 class SecondEntryParams(BaseModel):
