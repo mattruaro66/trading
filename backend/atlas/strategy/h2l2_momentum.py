@@ -62,6 +62,10 @@ class H2L2MomentumParams(BaseModel):
     momentum_min_range_atr: float = Field(1.0, ge=0, description="Candle expressivo: amplitude ≥ X × ATR")
     momentum_min_volume_mult: float = Field(1.5, ge=0, description="…ou volume ≥ X × média dos 20 candles anteriores")
     momentum_breakout_lookback: int = Field(20, ge=5, le=100, description="Rompimento: fecha além do extremo de N candles")
+    min_stop_atr: float | None = Field(None, ge=0, description="Pesquisa: stop técnico mínimo em múltiplos do ATR")
+    min_stop_action: str = Field("skip", description="skip = não executa | widen = alarga o stop até o mínimo")
+    tech_stop_ref: str = Field("signal_bar", description="signal_bar | pullback (extremo do pullback, só H/L)")
+    tech_target_r: float | None = Field(None, gt=0, description="Pesquisa: alvo em R no stop técnico (padrão 300/200)")
     momentum_require_expressive: bool = Field(True, description="v1.1: exige candles expressivos e tendência/rompimento")
     enable_momentum: bool = True
     enable_big_bar: bool = True
@@ -174,15 +178,30 @@ class H2L2MomentumStrategy:
                 pb = bar.ts_open
             sl_pts, tp_pts, fixed = stop_pts, tgt_pts, True
             if p.stop_mode == "technical":
-                tech_stop = self.cs.round_to_tick(bar.low - tick if trend is Side.LONG else bar.high + tick)
+                ref_lo, ref_hi = bar.low, bar.high
+                if p.tech_stop_ref == "pullback" and kind == "leg" and legs.pullback_extreme is not None:
+                    ref_lo, ref_hi = min(bar.low, legs.pullback_extreme), max(bar.high, legs.pullback_extreme)
+                tech_stop = self.cs.round_to_tick(ref_lo - tick if trend is Side.LONG else ref_hi + tick)
                 sl_pts = abs(entry - tech_stop)
-                tp_pts = self.cs.round_to_tick(sl_pts * p.target_points / p.stop_points, "down")  # alvo conservador
+                floor_ok = True
+                if p.min_stop_atr is not None and m.atr:
+                    floor = self.cs.round_to_tick(p.min_stop_atr * m.atr, "up")
+                    if sl_pts < floor:
+                        if p.min_stop_action == "widen":
+                            sl_pts = floor
+                        else:
+                            floor_ok = False
+                ratio = p.tech_target_r if p.tech_target_r is not None else p.target_points / p.stop_points
+                tp_pts = self.cs.round_to_tick(sl_pts * ratio, "down")  # alvo conservador
                 fixed = False
                 continuity = label.endswith("BARRAS")
                 crit = crit + [Criterion("S1", "Stop técnico até o máximo estabelecido" +
                                          (" (exceção: continuidade)" if continuity else ""),
                                          continuity or sl_pts <= stop_pts,
                                          self.cs.price_diff_to_ticks(sl_pts), self.cs.price_diff_to_ticks(stop_pts))]
+                if p.min_stop_atr is not None:
+                    crit = crit + [Criterion("S2", f"Stop técnico ≥ {p.min_stop_atr:g}× ATR", floor_ok,
+                                             self.cs.price_diff_to_ticks(sl_pts), p.min_stop_atr)]
             passed = all(c.passed for c in crit) and sl_pts > 0
             signal = None
             if passed:
