@@ -195,6 +195,8 @@ Backtest, replay e live usam o mesmo `TradeSimulator`, que registra as ordens do
 
 **Lateralidade (regra do usuário):** H e L não são contados quando há 3 ou mais barras consecutivas sobrepostas (faixa de preço comum a todas). A contagem volta, do zero, só após rompimento confirmado: barra que fecha fora da faixa seguida de barra de continuidade (follow-through) que fecha além do fechamento da barra de rompimento. Sem continuidade, o rompimento falha e a lateralidade continua. Código: `backend/atlas/price_action/lateral.py` (ligado só para a estratégia B; `lateral_min_overlap = 0` = leitura literal, qualquer faixa comum).
 
+**v1.1 — stop técnico (padrão, `stop_mode="technical"`):** stop 1 tick além da extremidade oposta da barra de sinal/ativação; alvo = 1,5 × stop (proporção 300/200), arredondado ao tick em direção à entrada. Se o stop técnico for maior que o máximo estabelecido (200 pts, ou `stop_adr_frac` × ADR no forex), a entrada **não é executada** (critério S1). Exceção: entradas de continuidade (3 BARRAS), que executam mesmo com stop maior desde que os 3 candles sejam expressivos (amplitude ≥ 1 × ATR ou volume ≥ 1,5 × média de 20 candles; no forex, volume de ticks do MT5) e o movimento esteja em tendência ou rompimento (fechamento além do extremo dos 20 candles anteriores). O comportamento da v1.0 continua disponível com `stop_mode="fixed", momentum_require_expressive=False`.
+
 Sem janela de horário, sem exigência de posição, sem limite de contratos e sem prioridade: toda regra que disparar é executada.
 Filtro adicional apenas no backtest simulado: sinais em candles com dados inválidos não são executados.
 Lotes abertos são zerados no fim do pregão (escopo day trade do projeto).

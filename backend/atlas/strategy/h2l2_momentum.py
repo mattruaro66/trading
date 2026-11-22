@@ -27,7 +27,7 @@ from atlas.price_action.regime import Regime
 from atlas.strategy.base import Criterion, SetupEvaluation, Signal, StrategySpec, params_hash
 
 STRATEGY_ID = "h2l2_scale_momentum"
-STRATEGY_VERSION = "1.0.0"
+STRATEGY_VERSION = "1.1.0"
 
 SPEC = StrategySpec(
     strategy_id=STRATEGY_ID, version=STRATEGY_VERSION, name="H2/L2 + aumento no H3/L3 + momento",
@@ -56,6 +56,13 @@ class H2L2MomentumParams(BaseModel):
     stop_adr_frac: float | None = Field(None, gt=0, le=1)
     lateral_filter: bool = True  # não conta H/L em lateralidade (3+ barras com fechamento dentro da barra anterior)
     lateral_min_bars: int = Field(3, ge=2, le=20)
+    # Stop técnico (v1.1): 1 tick além do extremo oposto do candle de ativação; se maior que o stop estabelecido
+    # (stop_points ou stop_adr_frac), a operação não é executada — exceto a continuidade de 3 candles expressivos.
+    stop_mode: str = Field("technical", description="technical | fixed")
+    momentum_min_range_atr: float = Field(1.0, ge=0, description="Candle expressivo: amplitude ≥ X × ATR")
+    momentum_min_volume_mult: float = Field(1.5, ge=0, description="…ou volume ≥ X × média dos 20 candles anteriores")
+    momentum_breakout_lookback: int = Field(20, ge=5, le=100, description="Rompimento: fecha além do extremo de N candles")
+    momentum_require_expressive: bool = Field(True, description="v1.1: exige candles expressivos e tendência/rompimento")
     enable_momentum: bool = True
     enable_big_bar: bool = True
     flatten_minutes_before_close: int = Field(5, ge=0, le=60)
@@ -81,6 +88,7 @@ class H2L2MomentumStrategy:
         self._ranges: deque[float] = deque(maxlen=self.params.big_bar_lookback)
         self._run_dir = 0
         self._run_len = 0
+        self._hist: deque = deque(maxlen=max(self.params.momentum_breakout_lookback, 20) + 5)  # (bar, atr) anteriores
 
     def resolved_params(self) -> dict:
         return self.params.model_dump(mode="json")
@@ -92,6 +100,9 @@ class H2L2MomentumStrategy:
             self._run_dir, self._run_len = 0, 0
         if snap.reset_reason:
             self._ranges.clear()
+            self._hist.clear()
+        hist = list(self._hist)
+        self._hist.append((bar, m.atr))
         prior = list(self._ranges)
         self._ranges.append(m.range)
         d = 1 if bar.close > bar.open else -1 if bar.close < bar.open else 0
@@ -103,8 +114,13 @@ class H2L2MomentumStrategy:
         regime = snap.regime.regime
         trend = Side.LONG if regime is Regime.BULL_TREND else Side.SHORT if regime is Regime.BEAR_TREND else None
         out: list[SetupEvaluation] = []
+        # continuidade (3 candles) também vale em rompimento, mesmo sem regime de tendência
+        momentum_side, momentum_info = self._momentum(snap, hist, d)
+        if trend is None and momentum_side is not None:
+            trend = momentum_side
         if trend is None or (trend is Side.LONG and not p.allow_long) or (trend is Side.SHORT and not p.allow_short):
             return out
+        in_trend = regime in (Regime.BULL_TREND, Regime.BEAR_TREND)
         legs = snap.legs(trend)
         stop_pts, tgt_pts = p.stop_points, p.target_points
         adr_ok = True
@@ -115,7 +131,8 @@ class H2L2MomentumStrategy:
                 stop_pts = max(self.cs.tick_size, self.cs.round_to_tick(p.stop_adr_frac * adr))
                 tgt_pts = self.cs.round_to_tick(stop_pts * p.target_points / p.stop_points)
         common = [
-            Criterion("T1", "Sempre a favor da tendência", True, regime.value, "BULL_TREND/BEAR_TREND"),
+            Criterion("T1", "Sempre a favor da tendência (ou rompimento, na continuidade)", True, regime.value,
+                      "BULL_TREND/BEAR_TREND"),
             # filtro de qualidade de dados: aplica-se somente ao backtest/simulação deste modelo
             Criterion("T3", "Dados válidos na janela de análise", snap.data_ok, snap.data_ok, True),
         ] + ([] if p.stop_adr_frac is None else [
@@ -128,41 +145,87 @@ class H2L2MomentumStrategy:
 
         # Todas as regras do plano que dispararem neste candle são executadas (sem prioridade entre elas).
         triggered = []
-        if cand == 2:
+        if cand == 2 and in_trend:
             triggered.append(("leg", legs.label(2), "entry", common + [Criterion("R1", f"Barra de sinal do {legs.label(2)}", True, legs.label(2), legs.label(2))]))
-        elif cand == 3 and p.add_on_third:
+        elif cand == 3 and p.add_on_third and in_trend:
             triggered.append(("leg", legs.label(3), "add", common + [Criterion("R2", f"Barra de sinal do {legs.label(3)}: aumenta a mão x1", True, legs.label(3), legs.label(3))]))
         avg = sum(prior) / len(prior) if len(prior) == p.big_bar_lookback else None
-        if p.enable_big_bar and avg and d == trend.sign and m.range > p.big_bar_multiple * avg:
+        if p.enable_big_bar and in_trend and avg and d == trend.sign and m.range > p.big_bar_multiple * avg:
             triggered.append(("market", "BARRA 2x", "entry", common + [Criterion(
                 "R3", f"Amplitude > {p.big_bar_multiple:g}× a média das {p.big_bar_lookback} barras anteriores",
                 True, round(m.range / avg, 2), p.big_bar_multiple)]))
-        if p.enable_momentum and self._run_len == p.consecutive_bars and self._run_dir == trend.sign:
-            triggered.append(("market", f"{p.consecutive_bars} BARRAS", "entry", common + [Criterion(
-                "R4", f"{p.consecutive_bars} barras consecutivas a favor", True, self._run_len, p.consecutive_bars)]))
+        if p.enable_momentum and momentum_side is trend:
+            triggered.append(("market", f"{p.consecutive_bars} BARRAS", "entry", common + [
+                Criterion("R4", f"{p.consecutive_bars} barras consecutivas a favor", True, self._run_len, p.consecutive_bars),
+                Criterion("R5", "Candles expressivos (amplitude ≥ ATR ou volume ≥ 1,5× a média)", True,
+                          momentum_info["expressive"], True),
+                Criterion("R6", "Em tendência ou rompimento", True, momentum_info["context"], "tendência/rompimento")]))
 
         for kind, label, role, crit in triggered:
-            passed = all(c.passed for c in crit)
+            sign = trend.sign
+            tick = self.cs.tick_size
+            if kind == "leg":
+                otype = "stop"
+                entry = self.cs.round_to_tick(bar.high + tick if trend is Side.LONG else bar.low - tick)
+                pb = legs.pullback_start_ts
+            else:
+                otype = "market"
+                entry = bar.close  # referência; executa na abertura do próximo candle
+                pb = bar.ts_open
+            sl_pts, tp_pts, fixed = stop_pts, tgt_pts, True
+            if p.stop_mode == "technical":
+                tech_stop = self.cs.round_to_tick(bar.low - tick if trend is Side.LONG else bar.high + tick)
+                sl_pts = abs(entry - tech_stop)
+                tp_pts = self.cs.round_to_tick(sl_pts * p.target_points / p.stop_points, "down")  # alvo conservador
+                fixed = False
+                continuity = label.endswith("BARRAS")
+                crit = crit + [Criterion("S1", "Stop técnico até o máximo estabelecido" +
+                                         (" (exceção: continuidade)" if continuity else ""),
+                                         continuity or sl_pts <= stop_pts,
+                                         self.cs.price_diff_to_ticks(sl_pts), self.cs.price_diff_to_ticks(stop_pts))]
+            passed = all(c.passed for c in crit) and sl_pts > 0
             signal = None
             if passed:
-                if kind == "leg":
-                    otype = "stop"
-                    entry = self.cs.round_to_tick(bar.high + self.cs.tick_size if trend is Side.LONG else bar.low - self.cs.tick_size)
-                    pb = legs.pullback_start_ts
-                else:
-                    otype = "market"
-                    entry = bar.close  # referência; executa na abertura do próximo candle
-                    pb = bar.ts_open
-                sign = trend.sign
                 signal = Signal(
                     strategy_id=STRATEGY_ID, strategy_version=STRATEGY_VERSION, params_hash=self.params_hash, profile=p.profile,
                     symbol=self.symbol, contract=bar.contract, side=trend, signal_bar=bar, setup_label=label, entry_price=entry,
-                    stop_price=self.cs.round_to_tick(entry - sign * stop_pts),
-                    target_price=self.cs.round_to_tick(entry + sign * tgt_pts), risk_points=stop_pts,
-                    risk_ticks=self.cs.price_diff_to_ticks(stop_pts), target_r=p.target_r, time_exit_bars=0,
+                    stop_price=self.cs.round_to_tick(entry - sign * sl_pts),
+                    target_price=self.cs.round_to_tick(entry + sign * tp_pts), risk_points=sl_pts,
+                    risk_ticks=self.cs.price_diff_to_ticks(sl_pts), target_r=p.target_r, time_exit_bars=0,
                     pullback_start_ts=pb, criteria=tuple(crit),
                     context={"regime": snap.regime.as_dict(), "bar": m.as_dict(), "legs": {"count": legs.count}},
-                    order_type=otype, lot_role=role, stop_points=stop_pts, target_points=tgt_pts)
+                    order_type=otype, lot_role=role,
+                    stop_points=sl_pts if fixed else None, target_points=tp_pts if fixed else None)
             out.append(SetupEvaluation(STRATEGY_ID, trend, label, bar, "candidate", tuple(crit), passed,
                                        signal.pullback_start_ts if signal else legs.pullback_start_ts, signal))
         return out
+
+    def _momentum(self, snap: PriceActionSnapshot, hist: list, d: int):
+        """Continuidade: 3 candles seguidos na mesma direção, todos expressivos, em tendência ou rompimento."""
+        p, bar, m = self.params, snap.bar, snap.metrics
+        if not p.enable_momentum or d == 0 or self._run_len != p.consecutive_bars or len(hist) < p.consecutive_bars - 1:
+            return None, {}
+        if not p.momentum_require_expressive:  # regra v1.0: só 3 candles a favor da tendência
+            regime = snap.regime.regime
+            ok = (regime is Regime.BULL_TREND and d > 0) or (regime is Regime.BEAR_TREND and d < 0)
+            return ((Side.LONG if d > 0 else Side.SHORT), {"expressive": False, "context": "tendência"}) if ok else (None, {})
+        seq = [(b, a) for b, a in hist[-(p.consecutive_bars - 1):]] + [(bar, m.atr)]
+        vols = [b.volume for b, _ in hist[-20:] if b.volume]
+        vavg = sum(vols) / len(vols) if len(vols) >= 10 else None
+
+        def expressive(b, atr):
+            size_ok = atr is not None and (b.high - b.low) >= p.momentum_min_range_atr * atr
+            vol_ok = vavg is not None and b.volume is not None and b.volume >= p.momentum_min_volume_mult * vavg
+            return size_ok or vol_ok
+
+        if not all(expressive(b, a) for b, a in seq):
+            return None, {}
+        regime = snap.regime.regime
+        side = Side.LONG if d > 0 else Side.SHORT
+        trend_ok = (regime is Regime.BULL_TREND and d > 0) or (regime is Regime.BEAR_TREND and d < 0)
+        ref = [b for b, _ in hist[-p.momentum_breakout_lookback - (p.consecutive_bars - 1):-(p.consecutive_bars - 1) or None]]
+        breakout = len(ref) >= p.momentum_breakout_lookback and (
+            bar.close > max(b.high for b in ref) if d > 0 else bar.close < min(b.low for b in ref))
+        if not (trend_ok or breakout):
+            return None, {}
+        return side, {"expressive": True, "context": "tendência" if trend_ok else "rompimento"}

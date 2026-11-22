@@ -21,8 +21,11 @@ def clean_h2(extra=None):
 H2_FILL = (102100, 102125, 102100, 102120)  # aciona o H2 (102120 + 1 tick de slippage = 102125)
 
 
+LEGACY = {"stop_mode": "fixed", "momentum_require_expressive": False}  # regras da v1.0 (stop fixo 200/300)
+
+
 def run(bars, **kw):
-    pipe = AnalysisPipeline("WIN", H2L2MomentumParams(**kw))
+    pipe = AnalysisPipeline("WIN", H2L2MomentumParams(**{**LEGACY, **kw}))
     return pipe, [pipe.on_bar_closed(b) for b in bars]
 
 
@@ -86,7 +89,7 @@ def test_always_follows_trend_no_counter_trend_entries():
 
 
 def test_no_entries_outside_trend(synthetic_win):
-    pipe = AnalysisPipeline("WIN", H2L2MomentumParams())
+    pipe = AnalysisPipeline("WIN", H2L2MomentumParams(**LEGACY))
     for b in synthetic_win[:1500]:
         out = pipe.on_bar_closed(b)
         for s in out.signals:
@@ -95,7 +98,7 @@ def test_no_entries_outside_trend(synthetic_win):
 
 
 def test_brackets_and_exits_consistent(synthetic_win):
-    pipe = AnalysisPipeline("WIN", H2L2MomentumParams())
+    pipe = AnalysisPipeline("WIN", H2L2MomentumParams(**LEGACY))
     for b in synthetic_win[:3000]:
         pipe.on_bar_closed(b)
     sim = pipe.sim
@@ -225,3 +228,45 @@ def test_strategy_a_also_follows_brooks_tight_range_rule():
     pipe = AnalysisPipeline("WIN", SecondEntryParams())
     out = [pipe.on_bar_closed(b) for b in trend_then_h2()][-1]
     assert out.snapshot.lateral is not None and out.snapshot.lateral.counting_allowed and out.signals
+
+
+
+# ----------------------------------------------------------------------- v1.1: stop técnico
+def run_v11(bars, **kw):
+    pipe = AnalysisPipeline("WIN", H2L2MomentumParams(**kw))
+    return pipe, [pipe.on_bar_closed(b) for b in bars]
+
+
+def test_technical_stop_beyond_signal_bar_and_1_5x_target():
+    pipe, outs = run_v11(clean_h2([H2_FILL]))
+    sig = next(s for s in outs[-2].signals if s.setup_label == "H2")
+    # barra de sinal (102115, 102115, 102030, 102100): entrada 102120, stop 1 tick abaixo da mínima = 102025
+    assert sig.entry_price == 102120 and sig.stop_price == 102025 and sig.risk_points == 95
+    assert sig.target_price == 102120 + 140  # 1,5 × 95 = 142,5 → arredondado ao tick (140)
+    assert sig.stop_points is None  # preços fixos no gráfico, não pontos relativos
+
+
+def test_technical_stop_larger_than_max_is_not_executed():
+    _, outs = run_v11(clean_h2(), stop_points=80, target_points=120)  # stop técnico de 95 > 80
+    ev = next(e for e in outs[-1].evaluations if e.setup_label == "H2")
+    assert not ev.passed and next(c for c in ev.criteria if c.code == "S1").passed is False
+    assert not outs[-1].signals
+
+
+def test_continuity_exception_allows_larger_stop_when_bars_are_expressive():
+    rows = [(102250, 102255, 102200, 102210),
+            (102210, 102300, 102205, 102295), (102295, 102390, 102290, 102385), (102385, 102480, 102380, 102475),
+            (102475, 102490, 102470, 102485)]
+    _, outs = run_v11(after_trend(rows), stop_points=50, target_points=75)  # stop técnico ≈ 100 > 50
+    sig = next(s for s in outs[-2].signals if s.setup_label == "3 BARRAS")
+    assert sig.risk_points > 50  # exceção: executa mesmo com stop acima do máximo
+    crit = {c.code: c for c in sig.criteria}
+    assert crit["S1"].passed and crit["R5"].passed and crit["R6"].value in ("tendência", "rompimento")
+
+
+def test_continuity_requires_expressive_bars():
+    rows = [(102250, 102255, 102200, 102210),
+            (102210, 102225, 102205, 102220), (102220, 102235, 102215, 102230), (102230, 102245, 102225, 102240),
+            (102240, 102250, 102235, 102245)]  # 3 candles de alta pequenos (amplitude bem abaixo do ATR)
+    _, outs = run_v11(after_trend(rows))
+    assert not any(s.setup_label == "3 BARRAS" for s in outs[-2].signals)

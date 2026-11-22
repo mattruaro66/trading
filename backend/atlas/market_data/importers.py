@@ -191,6 +191,14 @@ def _detect_minutes(ts: pd.Series) -> int | None:
     return int(counts.idxmax())
 
 
+def _volume_column(df: pd.DataFrame, sym: Symbol, assumptions: list[str]):
+    vol = pd.to_numeric(df["volume"], errors="coerce") if "volume" in df else None
+    if sym.is_fx and (vol is None or vol.isna().all()) and "tick_volume" in df:
+        assumptions.append("Forex sem volume real: usado o volume de ticks do MT5 (tick_volume) como volume.")
+        return pd.to_numeric(df["tick_volume"], errors="coerce")
+    return vol if vol is not None else pd.NA
+
+
 def import_bars(
     data: bytes | str | Path,
     symbol: Symbol | str,
@@ -255,7 +263,7 @@ def import_bars(
         "high": pd.to_numeric(df["high"], errors="coerce"),
         "low": pd.to_numeric(df["low"], errors="coerce"),
         "close": pd.to_numeric(df["close"], errors="coerce"),
-        "volume": pd.to_numeric(df["volume"], errors="coerce") if "volume" in df else pd.NA,
+        "volume": _volume_column(df, sym, assumptions),
         "trades": pd.to_numeric(df["trades"], errors="coerce") if "trades" in df else pd.NA,
     })
 
