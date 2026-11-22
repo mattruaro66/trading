@@ -26,7 +26,9 @@ def _repo() -> Repository:
 
 def cmd_import(a) -> int:
     from atlas.market_data.importers import import_bars
-    res = import_bars(a.file, a.symbol, a.contract, timestamp_label=a.timestamp_label, resample_from_1m=a.resample_from_1m)
+    offs = tuple(int(x) for x in a.server_offsets.split(",")) if a.server_offsets else None
+    res = import_bars(a.file, a.symbol, a.contract, timestamp_label=a.timestamp_label, resample_from_1m=a.resample_from_1m,
+                      server_offsets=offs)
     saved = _repo().save_import(res, a.file, replace=a.replace) if res.bars else {"inserted": 0}
     print(json.dumps({"summary": res.summary(), "saved": saved}, indent=2, ensure_ascii=False, default=str))
     for i in res.report.issues[:30]:
@@ -98,6 +100,7 @@ def main(argv=None) -> int:
     i.add_argument("--timestamp-label", default="open", choices=["open", "close"])
     i.add_argument("--resample-from-1m", action="store_true")
     i.add_argument("--replace", action="store_true")
+    i.add_argument("--server-offsets", default=None, help="Forex: fuso do servidor MT5, ex. 2,3 (UTC+2 / UTC+3 no verão de NY)")
     i.set_defaults(fn=cmd_import)
     b = sub.add_parser("backtest")
     b.add_argument("--symbol", required=True, choices=["WIN", "WDO", "EURUSD", "USDJPY", "USDBRL"])

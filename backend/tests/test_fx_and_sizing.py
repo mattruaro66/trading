@@ -71,7 +71,7 @@ def test_import_mt5_fx_csv_keeps_only_london_ny():
     per_day = pd.Series([b.ts_open.date() for b in res.bars]).value_counts()
     assert set(per_day.values) == {108}  # 08:00–17:00 de Londres em cada dia
     assert res.bars[0].ts_open.hour == 5  # 08:00 GMT = 05:00 em Brasília
-    assert any("Londres/NY" in a for a in res.assumptions)
+    assert any("Londres" in a for a in res.assumptions)
 
 
 def test_fx_backtests_respect_loss_limit():

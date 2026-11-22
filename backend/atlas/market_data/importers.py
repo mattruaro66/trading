@@ -86,7 +86,7 @@ def _normalize_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, str, list[str]]:
     return df, fmt, assumptions
 
 
-def fx_server_to_utc(ts: pd.Series, assumptions: list[str]) -> pd.Series:
+def fx_server_to_utc(ts: pd.Series, assumptions: list[str], fixed_offsets: tuple[int, int] | None = None) -> pd.Series:
     """Converte horários do servidor MT5 (forex) para UTC.
 
     O forex abre no domingo às 17:00 de Nova York. A primeira barra de cada semana completa revela o deslocamento
@@ -95,8 +95,14 @@ def fx_server_to_utc(ts: pd.Series, assumptions: list[str]) -> pd.Series:
     verão em NY; semanas incompletas (ex.: o arquivo começa no meio da semana) não interferem.
     """
     ts = pd.to_datetime(ts)
-    week = ts.dt.to_period("W-SAT")  # semanas de domingo a sábado
     ny = __import__("zoneinfo").ZoneInfo("America/New_York")
+    if fixed_offsets is not None:  # fuso já conhecido do servidor: (sem horário de verão em NY, com horário de verão)
+        dst = ts.map(lambda t: bool(datetime.combine(t.date(), time(12, 0), ny).dst()))
+        off = dst.map(lambda x: fixed_offsets[1] if x else fixed_offsets[0])
+        assumptions.append(f"Fuso do servidor MT5 informado: UTC+{fixed_offsets[0]} sem horário de verão em NY e "
+                           f"UTC+{fixed_offsets[1]} com horário de verão (mesmo servidor validado com EURUSD/USDJPY).")
+        return (ts - pd.to_timedelta(off.astype(int), unit="h")).dt.tz_localize("UTC").dt.tz_convert(TZ)
+    week = ts.dt.to_period("W-SAT")  # semanas de domingo a sábado
     cand: dict = {}
     dst_of: dict = {}
     for wk, f in ts.groupby(week).min().items():
@@ -194,6 +200,7 @@ def import_bars(
     timestamp_label: str = "open",
     resample_from_1m: bool = False,
     synthetic: bool = False,
+    server_offsets: tuple[int, int] | None = None,
     series_kind: SeriesKind = SeriesKind.CONTRACT,
     calendar: TradingCalendar | None = None,
 ) -> ImportResult:
@@ -232,10 +239,14 @@ def import_bars(
 
     if sym.is_fx:
         raw_ts = pd.to_datetime(df["timestamp"].astype(str), format="mixed")
-        ts_series = fx_server_to_utc(raw_ts, assumptions)
+        ts_series = fx_server_to_utc(raw_ts, assumptions, server_offsets)
         if timestamp_label == "close":
             ts_series = ts_series - TIMEFRAME
-        assumptions.append("Forex: mantidos apenas os candles da sessão Londres/Nova York (08:00–17:00 de Londres).")
+        sess = cal.session(sym, ts_series.iloc[0].date()) if len(ts_series) else None
+        assumptions.append("Forex: mantidos apenas os candles da sessão operada " +
+                           ("(Londres/Nova York, 08:00–17:00 de Londres)." if sym is not Symbol.USDBRL
+                            else "(horário do WDO na B3, 09:00–18:30 de Brasília)."))
+        _ = sess
     else:
         ts_series = _parse_timestamps(df["timestamp"], fmt, timestamp_label, assumptions)
     out = pd.DataFrame({
@@ -248,13 +259,22 @@ def import_bars(
         "trades": pd.to_numeric(df["trades"], errors="coerce") if "trades" in df else pd.NA,
     })
 
+    if sym.is_fx and len(out) > 10:
+        # registros de lixo do servidor: preço mais de 5% distante da mediana dos vizinhos
+        med = out["close"].rolling(25, center=True, min_periods=5).median()
+        hi, lo = out[["open", "high", "low", "close"]].max(axis=1), out[["open", "high", "low", "close"]].min(axis=1)
+        spikes = (hi > med * 1.05) | (lo < med * 0.95)
+        if spikes.any():
+            assumptions.append(f"{int(spikes.sum())} candle(s) com preço mais de 5% distante da mediana local descartados "
+                               "(registros inválidos do servidor).")
+            out = out[~spikes].reset_index(drop=True)
     if sym.is_fx:
         inside = [cal.session_for_ts(sym, t.to_pydatetime()) is not None and
                   cal.session_for_ts(sym, (t + TIMEFRAME - pd.Timedelta(seconds=1)).to_pydatetime()) is not None
                   for t in out["ts_open"]]
         n_out = len(out) - sum(inside)
         out = out[inside].reset_index(drop=True)
-        assumptions.append(f"{n_out} candles fora da janela Londres/NY descartados.")
+        assumptions.append(f"{n_out} candles fora da janela da sessão descartados.")
     minutes = _detect_minutes(out["ts_open"])
     if minutes is None:
         assumptions.append("Poucos candles para inferir o intervalo; assumido 5 min (a grade de 5 min é validada candle a candle).")

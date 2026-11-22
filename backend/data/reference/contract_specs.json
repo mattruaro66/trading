@@ -115,9 +115,9 @@
       "name": "Dólar / Real (forex via MetaTrader 5) — substituto do WDO",
       "version": "1",
       "effective_from": "2000-01-01",
-      "tick_size": 1e-05,
+      "tick_size": 0.0001,
       "point_value_brl": 100000,
-      "price_decimals": 5,
+      "price_decimals": 4,
       "expiry_month_codes": [],
       "expiry_rule": "none",
       "kind": "fx",
@@ -126,7 +126,7 @@
       "account_currency": "USD",
       "lot_step": 0.01,
       "min_lot": 0.01,
-      "source": "Convenção de mercado (1 lote = 100.000 USD); conferir dígitos e contrato do símbolo na corretora"
+      "source": "MetaQuotes-Demo: preços com 4 casas (conferido nos dados exportados); 1 lote = 100.000 USD (convenção)"
     }
   ]
 }

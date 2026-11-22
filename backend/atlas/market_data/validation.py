@@ -174,6 +174,10 @@ def is_next_session_open(prev: Bar, cur: Bar, calendar: TradingCalendar | None =
     s_cur = cal.session_for_ts(cur.symbol, cur.ts_open)
     if not s_prev or not s_cur:
         return False
+    consecutive_days = s_cur.day == cal.next_trading_day(s_prev.day, prev.symbol)
+    if prev.symbol.is_fx:
+        # forex: o horário efetivo de negociação pode ser menor que a janela da sessão (ex.: USDBRL offshore);
+        # a virada para o dia útil seguinte é uma troca normal de pregão, não uma lacuna de dados.
+        return consecutive_days
     last_prev = s_prev.bucket_opens()[-1]
-    return (prev.ts_open == last_prev and cur.ts_open == s_cur.open
-            and s_cur.day == cal.next_trading_day(s_prev.day, prev.symbol))
+    return prev.ts_open == last_prev and cur.ts_open == s_cur.open and consecutive_days
