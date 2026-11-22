@@ -127,6 +127,35 @@ class _Pending:
     qty: float = 1.0
 
 
+def entry_bar_path(bar: Bar, sign: int, trigger: float, stop: float, target: float) -> tuple[str | None, float, float]:
+    """Candle de entrada: stop/alvo só contam DEPOIS da ativação da ordem.
+
+    Caminho intrabar (convenção do testador do MetaTrader): candle de alta O→L→H→C; de baixa O→H→L→C;
+    doji: primeiro o extremo mais próximo da abertura. Retorna ("stop" | "target" | None, MFE, MAE) medidos
+    só a partir da ativação. Sem dados de 1 minuto a ordem real dentro do candle é desconhecida.
+    """
+    o, h, l, c = bar.open, bar.high, bar.low, bar.close
+    if c > o or (c == o and (o - l) <= (h - o)):
+        pts = [o, l, h, c]
+    else:
+        pts = [o, h, l, c]
+    entered = (o >= trigger) if sign > 0 else (o <= trigger)
+    best = worst = 0.0
+    for a, b in zip(pts, pts[1:]):
+        if not entered:
+            crosses = (a < trigger <= b) if sign > 0 else (a > trigger >= b)
+            if not crosses:
+                continue
+            entered, a = True, trigger
+        best = max(best, sign * (b - trigger))
+        worst = max(worst, sign * (trigger - b))
+        if sign * (b - a) < 0 and sign * (b - stop) <= 0:
+            return "stop", best, worst
+        if sign * (b - a) > 0 and sign * (b - target) >= 0:
+            return "target", best, worst
+    return None, best, worst
+
+
 @dataclass
 class TradeSimulator:
     symbol: str
@@ -303,13 +332,17 @@ class TradeSimulator:
         slip_out = self._slip(self.costs.exit_slippage_ticks + self.costs.spread_ticks)
         slip_tgt = self._slip(self.costs.target_slippage_ticks)
         t.bars_held += 1
-        fav = (bar.high - t.entry_price) if sign > 0 else (t.entry_price - bar.low)
-        adv = (t.entry_price - bar.low) if sign > 0 else (bar.high - t.entry_price)
+        if entry_bar:
+            trig = bar.open if (t.entry_gap or t.signal.order_type == "market") else t.signal.entry_price
+            hit, fav, adv = entry_bar_path(bar, sign, trig, t.stop_price, t.target_price)
+            stop_hit, tgt_hit = hit == "stop", hit == "target"
+        else:
+            fav = (bar.high - t.entry_price) if sign > 0 else (t.entry_price - bar.low)
+            adv = (t.entry_price - bar.low) if sign > 0 else (bar.high - t.entry_price)
+            stop_hit = bar.low <= t.stop_price if sign > 0 else bar.high >= t.stop_price
+            tgt_hit = bar.high >= t.target_price if sign > 0 else bar.low <= t.target_price
         t.mfe_points = max(t.mfe_points, fav)
         t.mae_points = max(t.mae_points, adv)
-
-        stop_hit = bar.low <= t.stop_price if sign > 0 else bar.high >= t.stop_price
-        tgt_hit = bar.high >= t.target_price if sign > 0 else bar.low <= t.target_price
         exit_px = reason = None
         if not entry_bar:
             gap_stop = bar.open <= t.stop_price if sign > 0 else bar.open >= t.stop_price

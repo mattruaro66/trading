@@ -27,7 +27,7 @@ from atlas.price_action.regime import Regime
 from atlas.strategy.base import Criterion, SetupEvaluation, Signal, StrategySpec, params_hash
 
 STRATEGY_ID = "h2l2_scale_momentum"
-STRATEGY_VERSION = "1.1.0"
+STRATEGY_VERSION = "1.2.0"
 
 SPEC = StrategySpec(
     strategy_id=STRATEGY_ID, version=STRATEGY_VERSION, name="H2/L2 + aumento no H3/L3 + momento",
@@ -67,6 +67,7 @@ class H2L2MomentumParams(BaseModel):
     tech_stop_ref: str = Field("signal_bar", description="signal_bar | pullback (extremo do pullback, só H/L)")
     tech_target_r: float | None = Field(None, gt=0, description="Pesquisa: alvo em R no stop técnico (padrão 300/200)")
     momentum_require_expressive: bool = Field(True, description="v1.1: exige candles expressivos e tendência/rompimento")
+    momentum_entry: str = Field("stop", description="stop = 1 tick além da barra de sinal (padrão) | market = abertura seguinte (v1.0)")
     enable_legs: bool = Field(True, description="Entradas H2/L2 e H3/L3")
     enable_momentum: bool = True
     enable_big_bar: bool = True
@@ -173,6 +174,10 @@ class H2L2MomentumStrategy:
                 otype = "stop"
                 entry = self.cs.round_to_tick(bar.high + tick if trend is Side.LONG else bar.low - tick)
                 pb = legs.pullback_start_ts
+            elif p.momentum_entry == "stop":
+                otype = "stop"  # ativação 1 tick além da barra de sinal, válida 1 candle
+                entry = self.cs.round_to_tick(bar.high + tick if trend is Side.LONG else bar.low - tick)
+                pb = bar.ts_open
             else:
                 otype = "market"
                 entry = bar.close  # referência; executa na abertura do próximo candle

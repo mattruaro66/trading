@@ -21,7 +21,7 @@ def clean_h2(extra=None):
 H2_FILL = (102100, 102125, 102100, 102120)  # aciona o H2 (102120 + 1 tick de slippage = 102125)
 
 
-LEGACY = {"stop_mode": "fixed", "momentum_require_expressive": False}  # regras da v1.0 (stop fixo 200/300)
+LEGACY = {"stop_mode": "fixed", "momentum_require_expressive": False, "momentum_entry": "market"}  # regras da v1.0 (stop fixo 200/300)
 
 
 def run(bars, **kw):
@@ -270,3 +270,13 @@ def test_continuity_requires_expressive_bars():
             (102240, 102250, 102235, 102245)]  # 3 candles de alta pequenos (amplitude bem abaixo do ATR)
     _, outs = run_v11(after_trend(rows))
     assert not any(s.setup_label == "3 BARRAS" for s in outs[-2].signals)
+
+
+def test_continuity_entry_is_stop_order_beyond_signal_bar():
+    rows = [(102250, 102255, 102200, 102210),
+            (102210, 102300, 102205, 102295), (102295, 102390, 102290, 102385), (102385, 102480, 102380, 102475),
+            (102475, 102490, 102470, 102485)]
+    _, outs = run_v11(after_trend(rows))
+    sig = next(s for s in outs[-2].signals if s.setup_label == "3 BARRAS")
+    # barra de sinal (102385, 102480, 102380, 102475): compra 1 tick acima da máxima, stop 1 tick abaixo da mínima
+    assert sig.order_type == "stop" and sig.entry_price == 102485 and sig.stop_price == 102375

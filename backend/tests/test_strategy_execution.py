@@ -79,11 +79,21 @@ def sim_with(signal_bar, next_bars, costs=None, **sig_kw):
     return sim, evs
 
 
-def test_entry_bar_touching_stop_is_conservative_loss():
+def test_entry_bar_low_before_activation_does_not_stop():
+    # candle de entrada de alta (O→L→H→C): a mínima abaixo do stop ocorre ANTES da ativação na máxima da barra de sinal
     bars = mk([(100000, 100050, 99950, 100020), (100020, 100200, 99900, 100100)])
     sim, evs = sim_with(bars[0], bars[1:])
+    t = sim.open_trade or sim.closed[0]
+    assert not (t.exit_reason == "stop" and t.bars_held == 1)
+    assert t.mae_points < 100055 - 99900  # MAE medida só depois da ativação
+
+
+def test_entry_bar_reversal_after_activation_stops():
+    # candle de entrada de baixa (O→H→L→C): ativa na subida e depois atravessa o stop no mesmo candle
+    bars = mk([(100000, 100050, 99950, 100020), (100020, 100200, 99900, 99920)])
+    sim, evs = sim_with(bars[0], bars[1:])
     t = sim.closed[0]
-    assert t.exit_reason == "stop" and t.points < 0  # stop tocado na própria barra de entrada
+    assert t.exit_reason == "stop" and t.bars_held == 1 and t.points < 0
 
 
 def test_same_bar_stop_and_target_resolves_stop():

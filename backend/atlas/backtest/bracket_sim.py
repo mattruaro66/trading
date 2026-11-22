@@ -2,7 +2,7 @@
 
 Usado por estratégias que adicionam contratos (ex.: H2 + aumento no H3). Ordens são SIMULADAS
 (``SimOrder``); nada é enviado a corretora/bolsa. Mesma política conservadora do ``TradeSimulator``:
-* stop tocado no candle de entrada → stop;
+* candle de entrada: stop/alvo só depois da ativação, pelo caminho O→L→H→C (alta) ou O→H→L→C (baixa);
 * stop e alvo no mesmo candle → stop;
 * gap além do stop → saída na abertura; gap além do alvo → saída no alvo;
 * fim da sessão / lacuna de dados → saída a mercado de todos os lotes.
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from atlas.backtest.costs import CostModel
-from atlas.backtest.execution import EXIT_REASON_PT, ExecEvent, SimOrder, Trade
+from atlas.backtest.execution import EXIT_REASON_PT, ExecEvent, SimOrder, Trade, entry_bar_path
 from atlas.contracts.calendar import TradingCalendar, load_calendar
 from atlas.contracts.specs import get_spec
 from atlas.core.timeframe import TZ
@@ -248,10 +248,17 @@ class BracketSimulator:
         slip_out = self.spec.ticks(self.costs.exit_slippage_ticks + self.costs.spread_ticks)
         slip_tgt = self.spec.ticks(self.costs.target_slippage_ticks)
         t.bars_held += 1
-        t.mfe_points = max(t.mfe_points, (bar.high - t.entry_price) if sign > 0 else (t.entry_price - bar.low))
-        t.mae_points = max(t.mae_points, (t.entry_price - bar.low) if sign > 0 else (bar.high - t.entry_price))
-        stop_hit = bar.low <= t.stop_price if sign > 0 else bar.high >= t.stop_price
-        tgt_hit = bar.high >= t.target_price if sign > 0 else bar.low <= t.target_price
+        if entry_bar:
+            trig = bar.open if (t.entry_gap or t.signal.order_type == "market") else t.signal.entry_price
+            hit, fav, adv = entry_bar_path(bar, sign, trig, t.stop_price, t.target_price)
+            stop_hit, tgt_hit = hit == "stop", hit == "target"
+        else:
+            fav = (bar.high - t.entry_price) if sign > 0 else (t.entry_price - bar.low)
+            adv = (t.entry_price - bar.low) if sign > 0 else (bar.high - t.entry_price)
+            stop_hit = bar.low <= t.stop_price if sign > 0 else bar.high >= t.stop_price
+            tgt_hit = bar.high >= t.target_price if sign > 0 else bar.low <= t.target_price
+        t.mfe_points = max(t.mfe_points, fav)
+        t.mae_points = max(t.mae_points, adv)
         px = reason = None
         if not entry_bar:
             if (bar.open <= t.stop_price) if sign > 0 else (bar.open >= t.stop_price):

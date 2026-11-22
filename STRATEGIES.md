@@ -201,6 +201,8 @@ Sem janela de horário, sem exigência de posição, sem limite de contratos e s
 Filtro adicional apenas no backtest simulado: sinais em candles com dados inválidos não são executados.
 Lotes abertos são zerados no fim do pregão (escopo day trade do projeto).
 
+**v1.2 — execução sempre na ativação:** todas as entradas da estratégia B (inclusive 3 BARRAS e BARRA 2x) são ordens stop 1 tick além da barra de sinal, válidas 1 candle, com stop 1 tick além da ponta oposta (`momentum_entry="stop"`; `"market"` mantém a v1.0). No candle de entrada, stop e alvo só contam depois da ativação, seguindo o caminho intrabar O→L→H→C (candle de alta) ou O→H→L→C (candle de baixa), convenção do testador do MetaTrader (vale para todos os simuladores). Antes, qualquer candle de entrada que cobrisse a ponta oposta era tratado como stop, mesmo quando a mínima/máxima ocorreu antes da ativação. A ordem real dentro do candle só é conhecida com dados de 1 minuto.
+
 ### 6.1 Sistema D — hipótese derivada da estratégia B (NÃO validado)
 
 Configuração: `H2L2MomentumParams(stop_adr_frac=0.10, enable_legs=False, enable_momentum=False, min_stop_atr=1.0, min_stop_action="widen", tech_target_r=2.0)`.
