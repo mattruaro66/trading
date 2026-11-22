@@ -87,30 +87,42 @@ def _normalize_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, str, list[str]]:
 
 
 def fx_server_to_utc(ts: pd.Series, assumptions: list[str]) -> pd.Series:
-    """Converte horários do servidor MT5 (forex) para UTC, detectando o deslocamento semana a semana.
+    """Converte horários do servidor MT5 (forex) para UTC.
 
-    O mercado de forex abre no domingo às 17:00 de Nova York. A primeira barra de cada semana no arquivo
-    revela o deslocamento do servidor em relação ao UTC (normalmente UTC+2 no inverno e UTC+3 no verão de NY).
+    O forex abre no domingo às 17:00 de Nova York. A primeira barra de cada semana completa revela o deslocamento
+    do servidor em relação ao UTC. Servidores costumam acompanhar o horário de verão de NY (ex.: UTC+2 no inverno,
+    UTC+3 no verão), então o deslocamento é decidido pela moda separadamente para semanas com e sem horário de
+    verão em NY; semanas incompletas (ex.: o arquivo começa no meio da semana) não interferem.
     """
     ts = pd.to_datetime(ts)
     week = ts.dt.to_period("W-SAT")  # semanas de domingo a sábado
-    first = ts.groupby(week).transform("min")
-    offsets = {}
+    ny = __import__("zoneinfo").ZoneInfo("America/New_York")
+    cand: dict = {}
+    dst_of: dict = {}
     for wk, f in ts.groupby(week).min().items():
-        sunday = (wk.start_time).normalize()  # domingo
-        ny_open = pd.Timestamp(datetime.combine(sunday.date(), time(17, 0))).tz_localize("America/New_York")
-        ny_open_utc = ny_open.tz_convert("UTC").tz_localize(None)
-        h = round((f - ny_open_utc).total_seconds() / 3600)
-        offsets[wk] = h if -12 <= h <= 14 else None
-    vals = [v for v in offsets.values() if v is not None]
-    if not vals:
+        sunday = wk.start_time.date()
+        ny_open = pd.Timestamp(datetime.combine(sunday, time(17, 0))).tz_localize("America/New_York")
+        dst_of[wk] = bool(datetime.combine(sunday, time(17, 0), ny).dst())
+        h = round((f - ny_open.tz_convert("UTC").tz_localize(None)).total_seconds() / 3600)
+        cand[wk] = h if -12 <= h <= 14 else None
+    by_regime: dict[bool, list[int]] = {True: [], False: []}
+    for wk, h in cand.items():
+        if h is not None:
+            by_regime[dst_of[wk]].append(h)
+    def mode(v):
+        return max(set(v), key=v.count) if v else None
+    m = {k: mode(v) for k, v in by_regime.items()}
+    if m[True] is None and m[False] is None:
         raise ValueError("Não foi possível detectar o fuso do servidor MT5; informe-o manualmente.")
-    mode = max(set(vals), key=vals.count)
-    off = week.map(lambda w: offsets.get(w) if offsets.get(w) is not None else mode)
-    _ = first
+    if m[True] is None:
+        m[True] = m[False] + 1
+    if m[False] is None:
+        m[False] = m[True] - 1
+    off = week.map(lambda w: m[dst_of[w]])
+    outliers = sum(1 for wk, h in cand.items() if h != m[dst_of[wk]])
     assumptions.append(f"Fuso do servidor MT5 detectado pela abertura semanal do forex (17:00 de Nova York): "
-                       f"UTC{'+' if mode >= 0 else ''}{mode} na maioria das semanas "
-                       f"({sorted(set(vals))} ao longo do ano, horário de verão).")
+                       f"UTC+{m[False]} sem horário de verão em NY e UTC+{m[True]} com horário de verão "
+                       f"({outliers} semana(s) incompleta(s)/atípica(s) ignorada(s) na detecção).")
     return (ts - pd.to_timedelta(off.astype(int), unit="h")).dt.tz_localize("UTC").dt.tz_convert(TZ)
 
 
