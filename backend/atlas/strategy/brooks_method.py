@@ -47,7 +47,7 @@ from atlas.price_action.regime import Regime
 from atlas.strategy.base import Criterion, SetupEvaluation, Signal, StrategySpec, params_hash
 
 STRATEGY_ID = "brooks_method"
-STRATEGY_VERSION = "1.3.0"
+STRATEGY_VERSION = "1.4.0"
 
 SETUP_NAMES = {
     "S1": "H2/L2 tendência", "S2": "H1/L1 tendência forte", "S3": "H3/L3 cunha", "S4": "H4/L4",
@@ -84,6 +84,9 @@ class BrooksMethodParams(BaseModel):
     be_on_favorable_close: bool = Field(True, description="Gestão: barra fecha a favor → stop no zero a zero")
     trail_bar: bool = Field(False, description="Gestão: trailing stop por barra (ponta oposta de cada barra a favor)")
     manage_after_bars: int = Field(10, ge=0, description="Gestão: a partir da barra N do trade, barra contra → saída no fechamento (0 = desliga)")
+    review2_rules: bool = Field(True, description="v1.4: regras da 2ª revisão do usuário (U7–U10)")
+    two_legs: bool = Field(True, description="H2/L2 só no fim da 2ª perna (nova mínima/máxima do pullback após o H1/L1)")
+    max_pushes: int = Field(2, ge=1, description="U10: entradas a favor só até a N-ésima perna da tendência")
     user_rules: bool = Field(True, description="v1.2: regras da revisão do usuário (U1–U6)")
     lateral_slope_atr: float = Field(0.3, ge=0, description="U1: |EMA(t) − EMA(t−10)| abaixo disso (em ATR) …")
     lateral_crosses: int = Field(3, ge=1, description="U1: … e pelo menos N cruzamentos do fechamento com a EMA em 20 barras")
@@ -131,6 +134,7 @@ class BrooksMethodStrategy:
         self.session_bar = 0
         self.prev_session_last = None
         self.day_hi = self.day_lo = None
+        self.pushes = {1: 0, -1: 0}  # pernas (novos extremos após pullback) da tendência atual
         self.prev_day = None  # (máxima, mínima) da sessão anterior
         self._sess_cache = {}
 
@@ -177,6 +181,7 @@ class BrooksMethodStrategy:
         # tendência e idade
         td = 1 if rg.regime is Regime.BULL_TREND else -1 if rg.regime is Regime.BEAR_TREND else 0
         if td != self.trend_dir_prev:
+            self.pushes = {1: 1 if td > 0 else 0, -1: 1 if td < 0 else 0}
             self.trend_age = 0
             self.gap_used = {1: False, -1: False}
             self.extreme = None
@@ -185,6 +190,8 @@ class BrooksMethodStrategy:
             self.extreme = (bar.high if td > 0 else bar.low) if self.extreme is None else \
                 (max(self.extreme, bar.high) if td > 0 else min(self.extreme, bar.low))
         self.trend_dir_prev = td
+        if td and (snap.bull_legs if td > 0 else snap.bear_legs).reset_reason == "trend_resumed":
+            self.pushes[td] += 1  # pullback terminou com novo extremo: nova perna da tendência
         # clímax: barra enorme numa tendência madura
         if td and m.atr and m.range >= 3 * m.atr and self.trend_age >= 20 and (bar.close - bar.open) * td > 0:
             self.climax_until[td] = self.i + 10
@@ -257,6 +264,18 @@ class BrooksMethodStrategy:
             self._sess_cache = {key: sess}
         sess = self._sess_cache[key]
         return None if sess is None else (sess.close - bar.ts_close).total_seconds() / 60
+
+    def _channel_against(self, snap, d: int) -> bool:
+        """U7: canal estreito contra a entrada — 9+ das últimas 10 barras fecham do outro lado da média e a média anda contra."""
+        hist = list(self.h)[-9:] + [snap]
+        emas = [x.regime.ema for x in hist]
+        atr = snap.metrics.atr
+        if len(hist) < 10 or any(e is None for e in emas) or not atr:
+            return False
+        against = sum(1 for x, e in zip(hist, emas) if (x.bar.close - e) * d < 0)
+        old_ema = self.h[-10].regime.ema if len(self.h) >= 10 else None
+        moving = old_ema is not None and (emas[-1] - old_ema) * d <= -0.5 * atr
+        return against >= 9 and moving
 
     def _prior_reversal_leg(self, d: int) -> bool:
         """U6: nas reversões, já houve uma 1ª perna na nova direção que rompeu a média com barra de força (20 barras)."""
@@ -452,6 +471,22 @@ class BrooksMethodStrategy:
                               mins is None or mins > p.no_entry_last_minutes, None if mins is None else round(mins), p.no_entry_last_minutes),
                     Criterion("U6", "Reversão só após 1ª perna que rompe a média com força",
                               not reversal or self._prior_reversal_leg(d), reversal, True),
+                )
+            if p.review2_rules:
+                reversal = setup in REVERSAL_SETUPS
+                legs_d = snap.bull_legs if d > 0 else snap.bear_legs
+                prevs = self.h[-2] if len(self.h) >= 2 else None  # barra anterior à de sinal
+                strong_against = prevs is not None and self._strong(prevs, -d) and prevs.metrics.range > m.range
+                with_trend = self.trend_dir_prev == d and not reversal
+                crit = crit + (
+                    Criterion("U7", "Não opera contra canal estreito (9+ de 10 barras do outro lado da média)",
+                              not self._channel_against(snap, d), None, False),
+                    Criterion("U8", "Reversão: 2º sinal depois do rompimento da média",
+                              not reversal or (legs_d.count >= 1 and self._prior_reversal_leg(d)), legs_d.count, ">= 1"),
+                    Criterion("U9", "Barra anterior não é barra de força contra (maior que a de sinal)",
+                              not strong_against, strong_against, False),
+                    Criterion("U10", f"A favor só até a {p.max_pushes}ª perna da tendência (não no fim do movimento)",
+                              not with_trend or self.pushes[d] <= p.max_pushes, self.pushes.get(d), p.max_pushes),
                 )
             passed = all(c.passed for c in crit) and d not in done
             signal = None

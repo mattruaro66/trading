@@ -49,6 +49,10 @@ class AnalysisPipeline:
         self.cal = calendar or load_calendar()
         if pa_params is None and isinstance(strategy_params, H2L2MomentumParams) and strategy_params.lateral_filter:
             pa_params = PriceActionParams(lateral_filter=True, lateral_min_bars=strategy_params.lateral_min_bars)
+        from atlas.strategy.brooks_method import BrooksMethodParams
+        if pa_params is None and isinstance(strategy_params, BrooksMethodParams) and strategy_params.two_legs:
+            from atlas.price_action.legs import LegParams
+            pa_params = PriceActionParams(legs=LegParams(two_legs=True))
         self.engine = PriceActionEngine(pa_params, self.cal)
         self.strategy = make_strategy(self.symbol, strategy_params)
         self.simulate = simulate

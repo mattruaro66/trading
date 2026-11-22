@@ -194,3 +194,27 @@ def test_tight_range_height_limited_by_daily_range():
     g2 = LateralGate(3, 0.25)
     g2.day_ranges.extend([2000.0] * 5)  # limite de 500
     assert [g2.update(b) for b in bars][-1].event == "lateral_start"
+
+
+def test_two_legs_h2_requires_new_pullback_low():
+    """Brooks: H2 = fim da 2ª perna. Duas máximas maiores dentro da MESMA perna não formam H2."""
+    from atlas.core.types import Side
+    from atlas.price_action.legs import LegCounter, LegParams
+    rows = [(100, 110, 99, 109), (109, 120, 108, 119),      # alta
+            (119, 119, 112, 113),                            # início do pullback
+            (113, 116, 110, 111),                            # máxima menor, mínima menor
+            (111, 117, 110, 116),                            # H1
+            (116, 116, 112, 113),                            # máxima menor, SEM nova mínima
+            (113, 118, 112, 117),                            # bar-counting: H2; duas pernas: não
+            (117, 117, 105, 106),                            # nova mínima do pullback → 2ª perna
+            (106, 119, 105, 118)]                            # H2 verdadeiro
+    bars = mk(rows)
+    loose, strict = LegCounter(Side.LONG), LegCounter(Side.LONG, LegParams(two_legs=True))
+    ev_l, ev_s, prev = [], [], None
+    for b in bars:
+        ev_l.append(loose.update(b, prev).event)
+        ev_s.append(strict.update(b, prev).event)
+        prev = b
+    assert ev_l[4] == ev_s[4] == "H1"
+    assert ev_l[6] == "H2"          # contagem antiga: H2 dentro da mesma perna
+    assert ev_s[6] is None and ev_s[8] == "H2"

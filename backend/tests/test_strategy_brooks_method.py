@@ -17,7 +17,7 @@ from tests.helpers import make_signal
 @pytest.fixture(scope="module")
 def run40():
     bars = generate_bars("WIN", "WINK26", date(2026, 1, 5), 40, seed=33)
-    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False))
+    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False, review2_rules=False, two_legs=False))
     outs = [pipe.on_bar_closed(b) for b in bars]
     return bars, pipe, outs
 
@@ -50,7 +50,7 @@ def test_every_setup_has_a_name_and_reversal_set_is_known():
 def test_no_lookahead_truncation(run40):
     bars, _, outs = run40
     k = 2500
-    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False))
+    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False, review2_rules=False, two_legs=False))
     outs2 = [pipe.on_bar_closed(b) for b in bars[:k]]
     sig = lambda os: [(o.bar.ts_open, s.setup_label, s.side, s.entry_price, s.stop_price) for o in os for s in o.signals]
     assert sig(outs2) == sig(outs[:k])
@@ -99,7 +99,7 @@ def test_gap_reversal_setup():
     s2 = cal.session("WIN", cal.next_trading_day(day1[0].ts_open.date()))
     hi = day1[-1].high
     day2 = mk([(hi + 150, hi + 200, hi + 100, hi + 110), (hi + 110, hi + 120, hi - 50, hi - 30)], start=s2.open)
-    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False))
+    pipe = AnalysisPipeline("WIN", BrooksMethodParams(user_rules=False, review2_rules=False, two_legs=False))
     outs = [pipe.on_bar_closed(b) for b in day1 + day2]
     assert outs[-2].snapshot.session_start
     sig = [s for s in outs[-2].signals if s.setup_label == "S16"]
@@ -114,7 +114,7 @@ def test_trend_from_the_open_market_entry():
     day2 = mk([(last, last + 65, last - 5, last + 60), (last + 60, last + 125, last + 55, last + 120),
                (last + 120, last + 160, last + 115, last + 150)], start=s2.open)
     for always_stop, otype in ((False, "market"), (True, "stop")):
-        pipe = AnalysisPipeline("WIN", BrooksMethodParams(always_stop_entry=always_stop, user_rules=False))
+        pipe = AnalysisPipeline("WIN", BrooksMethodParams(always_stop_entry=always_stop, user_rules=False, review2_rules=False, two_legs=False))
         outs = [pipe.on_bar_closed(b) for b in day1 + day2]
         ev = [e for e in outs[-2].evaluations if e.setup_label == "S17"]
         assert ev  # tendência desde a abertura reconhecida no 2º candle do pregão

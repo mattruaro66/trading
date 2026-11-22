@@ -15,6 +15,7 @@ from atlas.core.types import Bar, Side
 class LegParams:
     max_count: int = 4
     max_pullback_bars: int = 20  # Brooks: após ~20 barras o pullback vira trading range
+    two_legs: bool = False  # True: depois do H1 só rearma com nova mínima do pullback (2ª perna), não só com máxima menor
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class LegCounter:
     pb_extreme: float | None = None
     pb_start: datetime | None = None
     bars_in_pb: int = 0
+    lo_at_count: float | None = None  # extremo do pullback quando a última contagem disparou
 
     def reset(self, swing: float | None = None) -> None:
         self.swing = swing
@@ -61,6 +63,7 @@ class LegCounter:
         self.pb_extreme = None
         self.pb_start = None
         self.bars_in_pb = 0
+        self.lo_at_count = None
 
     # Para LONG: "acima" = maior máxima. Para SHORT: espelho com mínimas.
     def _hi(self, b: Bar) -> float:
@@ -90,7 +93,12 @@ class LegCounter:
             if self.armed and hi > self._hi(prev):
                 self.count += 1
                 self.armed = False
+                self.lo_at_count = min(self.pb_extreme, lo) if self.pb_extreme is not None else lo
                 event = ("H" if self.side is Side.LONG else "L") + str(self.count)
+            elif self.params.two_legs:
+                # Brooks: o H2 é o fim da SEGUNDA perna — exige nova mínima do pullback depois do H1
+                if self.lo_at_count is not None and lo < self.lo_at_count:
+                    self.armed = True
             elif hi < self._hi(prev):  # Brooks: "bar with a lower high" rearma para o próximo H
                 self.armed = True
             self.pb_extreme = lo if self.pb_extreme is None else min(self.pb_extreme, lo)

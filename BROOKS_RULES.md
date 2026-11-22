@@ -80,3 +80,16 @@ o que o Brooks descreve → como o ATLAS aplica → estado.
 | U6 | "Esperaria o rompimento da média e uma primeira perna" (S10) | Reversões só depois de uma perna que fecha além da média com barra de força |
 
 `BrooksMethodParams(user_rules=False)` mantém a v1.1. Resultado e limitações: ver relatório da sessão; as 20 operações revisadas passam a ser bloqueadas, mas a expectativa do conjunto não melhorou (as regras cortam ganhadoras e perdedoras na mesma proporção).
+
+
+## Estratégia C v1.4 — 2ª revisão do usuário (20 perdas críticas comentadas)
+
+| Regra | Comentário do usuário | Tradução |
+|---|---|---|
+| Pernas | "Aguardaria o segundo sinal (que corresponde ao fim da segunda perna)" (T20) | `LegParams.two_legs`: depois do H1/L1, só rearma com nova mínima/máxima do pullback (2ª perna) |
+| U7 | "Compra contra um canal estreito de baixa e contra a tendência" (T03–T07) | Sem entradas quando 9+ das últimas 10 barras fecham do outro lado da média e ela anda ≥ 0,5 ATR contra |
+| U8 | "Podia esperar romper a linha de tendência com confirmação e vender depois" (T05) | Reversões só como 2º sinal (contagem ≥ 1) depois de barra de força que fecha além da média |
+| U9 | "Comprou uma barra ruim contra uma força enorme de baixa da barra anterior" (T07) | Barra anterior não pode ser barra de força contra e maior que a de sinal |
+| U10 | "Vendeu no final da tendência", "terceira perna" (T08, revisão 1 S1) | A favor só até a 2ª perna da tendência |
+
+Lateralidade (TTR): nenhuma medida simples (range de 6–20 barras em ATR, sobreposição, inclinação da EMA, cruzamentos) separa os 12 casos que o usuário chamou de TTR dos 19 que não chamou; U1 continua sendo uma aproximação fraca.
